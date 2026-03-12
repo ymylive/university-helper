@@ -1,3 +1,5 @@
+**Language:** English | [简体中文](./README.zh-CN.md)
+
 # University Helper
 
 University Helper is a full-stack campus helper project built around FastAPI and React. The repository name is `university-helper`, while parts of the source tree still use the historical internal name `easy_learning`.
