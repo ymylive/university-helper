@@ -1,0 +1,50 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: shuake-easy-learning-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MAIN_DB_HOST: postgres
+      MAIN_DB_NAME: main_db
+      MAIN_DB_USER: easylearning
+      MAIN_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      MAIN_DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY}
+      SHUAKE_COMPAT_SECRET: ${SHUAKE_COMPAT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      ENFORCE_HTTPS: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shuake-net
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: shuake-easy-learning-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: easylearning
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: main_db
+    volumes:
+      - shuake-postgres-data:/var/lib/postgresql/data
+      - ./database:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easylearning -d main_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks:
+      - shuake-net
+
+networks:
+  shuake-net:
+    driver: bridge
+
+volumes:
+  shuake-postgres-data:

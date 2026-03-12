@@ -1,0 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;500;600;700&family=Comic+Neue:wght@300;400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply transition-colors duration-200;
+  }
+
+  body {
+    @apply bg-background text-text;
+  }
+}
+
+@layer components {
+  .clay-card {
+    @apply backdrop-blur-lg bg-white/70 border border-white/20 rounded-2xl shadow-xl;
+  }
+
+  .clay-button {
+    @apply rounded-xl px-6 py-3 font-medium cursor-pointer
+           transition-all duration-200
+           hover:scale-105;
+  }
+
+  .clay-button-primary {
+    @apply clay-button bg-primary text-white
+           hover:bg-primary/90;
+  }
+
+  .clay-button-secondary {
+    @apply clay-button bg-secondary text-white
+           hover:bg-secondary/90;
+  }
+
+  .clay-button-cta {
+    @apply clay-button bg-cta text-white
+           hover:bg-cta/90;
+  }
+
+  .clay-input {
+    @apply w-full px-4 py-3 rounded-xl border border-white/30 bg-white/60 backdrop-blur-sm
+           focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary
+           transition-all duration-200;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-lg bg-white/80 border border-white/20;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

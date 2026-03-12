@@ -1,0 +1,503 @@
+﻿"""Zhihuishu adapter with minimal task orchestration for API polling."""
+
+import logging
+import threading
+import time
+from typing import Any, Callable, Dict, List, Optional
+from uuid import uuid4
+
+from .answer import ZhihuishuAnswer
+from .auth import ZhihuishuAuth
+from .learning import ZhihuishuLearning
+
+
+logger = logging.getLogger(__name__)
+UNEXPECTED_TASK_ERROR_PREFIX = "Unexpected task failure"
+
+
+class ZhihuishuAdapter:
+    """Zhihuishu adapter with login/course/video/progress controls."""
+
+    def __init__(self, ai_config: Optional[dict] = None, proxies: Optional[dict] = None):
+        self.proxies = proxies or {}
+        self.ai_config = ai_config or {"enabled": False}
+        self._config: Dict[str, Any] = {
+            "speed": 1.0,
+            "auto_answer": True,
+            "ai_config": dict(self.ai_config),
+            "proxies": dict(self.proxies),
+        }
+        self.auth = ZhihuishuAuth(proxies=self.proxies)
+        self.learning: Optional[ZhihuishuLearning] = None
+        self.answer: Optional[ZhihuishuAnswer] = None
+        self._task_lock = threading.Lock()
+        self._task_state: Optional[Dict[str, Any]] = None
+        self._tasks: Dict[str, Dict[str, Any]] = {}
+
+    def login_with_qr(self, qr_callback: Callable[[bytes], None]) -> Dict:
+        cookies = self.auth.qr_login(qr_callback)
+        self._init_services(cookies)
+        return {"success": True, "cookies": cookies}
+
+    def login_with_password(self, username: str, password: str) -> Dict:
+        cookies = self.auth.password_login(username, password)
+        self._init_services(cookies)
+        return {"success": True, "cookies": cookies}
+
+    def _init_services(self, cookies: dict):
+        self.learning = ZhihuishuLearning(cookies, self.proxies)
+        self.answer = ZhihuishuAnswer(cookies, self.ai_config, self.proxies)
+
+    @staticmethod
+    def _task_payload(task: Dict[str, Any], include_videos: bool = False) -> Dict[str, Any]:
+        payload = {
+            "task_id": task.get("task_id"),
+            "task_type": task.get("task_type", "course"),
+            "course_id": task.get("course_id"),
+            "status": task.get("status"),
+            "message": task.get("message"),
+            "created_at": task.get("created_at"),
+            "updated_at": task.get("updated_at"),
+            "total": task.get("total", 0),
+            "completed": task.get("completed", 0),
+            "failed": task.get("failed", 0),
+            "percentage": task.get("percentage", 0.0),
+            "current_video": task.get("current_video"),
+            "paused": bool(task.get("paused")),
+            "cancelled": bool(task.get("cancelled")),
+            "speed": task.get("speed", 1.0),
+            "auto_answer": bool(task.get("auto_answer", True)),
+        }
+        if include_videos:
+            payload["videos"] = list(task.get("videos", []))
+        return payload
+
+    def get_courses(self) -> List[Dict]:
+        if not self.learning:
+            raise Exception("Not logged in")
+        return self.learning.get_course_list()
+
+    def get_grouped_courses(self) -> List[Dict[str, Any]]:
+        courses = self.get_courses()
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for course in courses:
+            group_key = str(
+                course.get("semesterName")
+                or course.get("termName")
+                or course.get("courseTypeName")
+                or "default"
+            )
+            grouped.setdefault(group_key, []).append(course)
+
+        return [
+            {"group": name, "count": len(items), "courses": items}
+            for name, items in grouped.items()
+        ]
+
+    def get_course_detail(self, course_id: str) -> Dict[str, Any]:
+        target = str(course_id)
+        for course in self.get_courses():
+            current_id = str(course.get("courseId") or course.get("id") or "")
+            if current_id == target:
+                return course
+        raise Exception("Course not found")
+
+    def get_videos(self, course_id: str) -> List[Dict]:
+        if not self.learning:
+            raise Exception("Not logged in")
+
+        with self._task_lock:
+            if self._task_state and self._task_state.get("course_id") == course_id:
+                return list(self._task_state.get("videos", []))
+
+        chapters = self.learning.get_video_list(course_id)
+        return self._flatten_videos(chapters)
+
+    def start_course(self, course_id: str, speed: float = 1.0, auto_answer: bool = True) -> Dict:
+        if not self.learning:
+            raise Exception("Not logged in")
+
+        videos = self.get_videos(course_id)
+        task_id = uuid4().hex
+        total = len(videos)
+        now = time.time()
+        task_state: Dict[str, Any] = {
+            "task_id": task_id,
+            "course_id": course_id,
+            "status": "completed" if total == 0 else "running",
+            "message": "Task started" if total > 0 else "No videos found",
+            "created_at": now,
+            "updated_at": now,
+            "videos": videos,
+            "total": total,
+            "completed": 0,
+            "failed": 0,
+            "percentage": 0.0,
+            "current_video": None,
+            "estimated_time": None,
+            "paused": False,
+            "cancelled": False,
+            "speed": speed if speed > 0 else 1.0,
+            "auto_answer": bool(auto_answer),
+            "task_type": "course",
+        }
+
+        with self._task_lock:
+            self._task_state = task_state
+            self._tasks[task_id] = task_state
+            self._config["speed"] = float(task_state["speed"])
+            self._config["auto_answer"] = bool(task_state["auto_answer"])
+
+        if total > 0:
+            threading.Thread(target=self._run_task_loop_guarded, args=(task_id,), daemon=True).start()
+
+        return {
+            "task_id": task_id,
+            "status": task_state["status"],
+            "progress": self.get_progress(course_id),
+        }
+
+    def get_progress(self, course_id: str) -> Dict[str, Any]:
+        with self._task_lock:
+            task = dict(self._task_state) if self._task_state else None
+
+        if not task or task.get("course_id") != course_id:
+            return {
+                "status": "idle",
+                "message": "No running task",
+                "course_id": course_id,
+                "total": 0,
+                "completed": 0,
+                "failed": 0,
+                "percentage": 0.0,
+                "current_video": None,
+                "estimated_time": None,
+                "paused": False,
+            }
+
+        total = int(task.get("total") or 0)
+        completed = int(task.get("completed") or 0)
+        speed = float(task.get("speed") or 1.0)
+        remaining = max(total - completed, 0)
+        eta_seconds = int((remaining * 6) / max(speed, 0.1))
+
+        return {
+            "task_id": task.get("task_id"),
+            "course_id": task.get("course_id"),
+            "status": task.get("status", "running"),
+            "message": task.get("message", "ok"),
+            "total": total,
+            "completed": completed,
+            "failed": int(task.get("failed") or 0),
+            "percentage": float(task.get("percentage") or 0.0),
+            "current_video": task.get("current_video"),
+            "estimated_time": f"{eta_seconds}s" if task.get("status") == "running" else None,
+            "paused": bool(task.get("paused")),
+        }
+
+    def pause_task(self) -> Dict[str, Any]:
+        with self._task_lock:
+            if not self._task_state:
+                return {"status": "idle", "message": "No running task"}
+            if self._task_state.get("status") in {"completed", "cancelled"}:
+                return {"status": self._task_state["status"], "message": "Task already finished"}
+            self._task_state["paused"] = True
+            self._task_state["status"] = "paused"
+            self._task_state["message"] = "Task paused"
+            self._task_state["updated_at"] = time.time()
+            return {"status": "paused", "message": "Task paused"}
+
+    def resume_task(self) -> Dict[str, Any]:
+        with self._task_lock:
+            if not self._task_state:
+                return {"status": "idle", "message": "No running task"}
+            if self._task_state.get("status") == "cancelled":
+                return {"status": "cancelled", "message": "Task already cancelled"}
+            if self._task_state.get("status") == "completed":
+                return {"status": "completed", "message": "Task already completed"}
+            self._task_state["paused"] = False
+            self._task_state["status"] = "running"
+            self._task_state["message"] = "Task resumed"
+            self._task_state["updated_at"] = time.time()
+            return {"status": "running", "message": "Task resumed"}
+
+    def cancel_task(self) -> Dict[str, Any]:
+        with self._task_lock:
+            if not self._task_state:
+                return {"status": "idle", "message": "No running task"}
+            self._task_state["cancelled"] = True
+            self._task_state["paused"] = False
+            self._task_state["status"] = "cancelled"
+            self._task_state["message"] = "Task cancelled"
+            self._task_state["updated_at"] = time.time()
+            return {"status": "cancelled", "message": "Task cancelled"}
+
+    def list_tasks(self, task_type: Optional[str] = None, course_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        with self._task_lock:
+            tasks = [self._task_payload(task) for task in self._tasks.values()]
+
+        if task_type:
+            tasks = [task for task in tasks if str(task.get("task_type")) == str(task_type)]
+        if course_id:
+            tasks = [task for task in tasks if str(task.get("course_id")) == str(course_id)]
+
+        return sorted(tasks, key=lambda item: item.get("updated_at") or 0, reverse=True)
+
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self._task_lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return None
+            return self._task_payload(task, include_videos=True)
+
+    def cancel_task_by_id(self, task_id: str) -> Dict[str, Any]:
+        with self._task_lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return {"status": "idle", "message": "Task not found"}
+
+            task["cancelled"] = True
+            task["paused"] = False
+            task["status"] = "cancelled"
+            task["message"] = "Task cancelled"
+            task["updated_at"] = time.time()
+            if self._task_state and self._task_state.get("task_id") == task_id:
+                self._task_state = task
+            return {"status": "cancelled", "message": "Task cancelled", "task_id": task_id}
+
+    def start_course_task(
+        self,
+        course_id: str,
+        speed: float = 1.0,
+        auto_answer: bool = True,
+        task_type: str = "course",
+    ) -> Dict[str, Any]:
+        result = self.start_course(course_id, speed=speed, auto_answer=auto_answer)
+        task_id = str(result.get("task_id") or "")
+        if task_id:
+            with self._task_lock:
+                task = self._tasks.get(task_id)
+                if task:
+                    task["task_type"] = task_type
+                    task["auto_answer"] = bool(auto_answer)
+                    task["updated_at"] = time.time()
+        return result
+
+    def start_ai_course_task(self, course_id: str, speed: float = 1.0) -> Dict[str, Any]:
+        with self._task_lock:
+            self.ai_config["enabled"] = True
+            self._config["ai_config"] = dict(self.ai_config)
+            if self.answer is not None:
+                self.answer.ai_enabled = True
+        return self.start_course_task(course_id, speed=speed, auto_answer=True, task_type="ai-course")
+
+    def get_status(self) -> Dict[str, Any]:
+        with self._task_lock:
+            current_task = dict(self._task_state) if self._task_state else None
+            logged_in = self.learning is not None
+
+        payload: Dict[str, Any] = {
+            "logged_in": logged_in,
+            "status": "online" if logged_in else "offline",
+            "has_task": bool(current_task),
+            "current_task": self._task_payload(current_task) if current_task else None,
+        }
+        if current_task:
+            payload["progress"] = self.get_progress(str(current_task.get("course_id") or ""))
+        return payload
+
+    def logout(self) -> Dict[str, Any]:
+        with self._task_lock:
+            if self._task_state:
+                self._task_state["cancelled"] = True
+                self._task_state["paused"] = False
+                self._task_state["status"] = "cancelled"
+                self._task_state["message"] = "Task cancelled by logout"
+                self._task_state["updated_at"] = time.time()
+                self._tasks[self._task_state["task_id"]] = self._task_state
+            self.learning = None
+            self.answer = None
+        return {"status": "success", "message": "Logout successful"}
+
+    def get_config(self) -> Dict[str, Any]:
+        with self._task_lock:
+            config = dict(self._config)
+            config["ai_config"] = dict(self.ai_config)
+            config["proxies"] = dict(self.proxies)
+            return config
+
+    def update_config(self, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        with self._task_lock:
+            if "speed" in update_data and update_data.get("speed") is not None:
+                speed = float(update_data["speed"])
+                self._config["speed"] = speed if speed > 0 else 1.0
+            if "auto_answer" in update_data and update_data.get("auto_answer") is not None:
+                self._config["auto_answer"] = bool(update_data["auto_answer"])
+            if "proxies" in update_data and isinstance(update_data.get("proxies"), dict):
+                self.proxies = dict(update_data["proxies"])
+                self._config["proxies"] = dict(self.proxies)
+
+            ai_payload = update_data.get("ai_config")
+            if ai_payload is None and isinstance(update_data.get("ai"), dict):
+                ai_payload = update_data.get("ai")
+            if isinstance(ai_payload, dict):
+                self.ai_config.update(ai_payload)
+            self._config["ai_config"] = dict(self.ai_config)
+
+            if self.answer is not None:
+                self.answer.ai_enabled = bool(self.ai_config.get("enabled", False))
+                self.answer.use_zhidao_ai = bool(self.ai_config.get("use_zhidao_ai", True))
+                self.answer.stream = bool(self.ai_config.get("use_stream", True))
+
+            config = dict(self._config)
+            config["ai_config"] = dict(self.ai_config)
+            config["proxies"] = dict(self.proxies)
+            return config
+
+    def answer_question(self, question: Dict) -> Optional[str]:
+        if not self.answer:
+            raise Exception("Not logged in")
+        return self.answer.answer_question(question)
+
+    @staticmethod
+    def _flatten_videos(chapters: List[Dict[str, Any]]) -> List[Dict]:
+        videos: List[Dict[str, Any]] = []
+        index = 1
+        for chapter in chapters or []:
+            chapter_videos = chapter.get("videoLearningDtos") or chapter.get("videoDtos") or []
+            for item in chapter_videos:
+                title = (
+                    item.get("videoName")
+                    or item.get("name")
+                    or item.get("lessonVideoName")
+                    or f"Video {index}"
+                )
+                videos.append(
+                    {
+                        "id": str(item.get("videoId") or item.get("id") or index),
+                        "title": title,
+                        "duration": item.get("videoSec") or item.get("duration") or 0,
+                        "status": "pending",
+                        "progress": 0,
+                    }
+                )
+                index += 1
+        return videos
+
+    def _mark_task_error(self, task_id: str, message: str) -> None:
+        with self._task_lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return
+            task["status"] = "error"
+            task["message"] = message
+            task["updated_at"] = time.time()
+            if self._task_state and self._task_state.get("task_id") == task_id:
+                self._task_state = task
+
+    def _run_task_loop_guarded(self, task_id: str) -> None:
+        try:
+            self._run_task_loop(task_id)
+        except Exception as exc:  # pragma: no cover - defensive safety net
+            logger.exception("Zhihuishu task crashed: task_id=%s", task_id)
+            self._mark_task_error(task_id, f"{UNEXPECTED_TASK_ERROR_PREFIX}: {exc}")
+
+    def _run_task_loop(self, task_id: str) -> None:
+        current_index = 0
+
+        while True:
+            with self._task_lock:
+                if not self._task_state or self._task_state.get("task_id") != task_id:
+                    return
+                task = self._task_state
+                videos = task.get("videos", [])
+
+                if task.get("cancelled"):
+                    task["status"] = "cancelled"
+                    task["message"] = "Task cancelled"
+                    task["updated_at"] = time.time()
+                    return
+
+                if current_index >= len(videos):
+                    task["status"] = "completed"
+                    task["message"] = "Task completed"
+                    task["percentage"] = 100.0 if task.get("total") else 0.0
+                    task["current_video"] = None
+                    task["updated_at"] = time.time()
+                    return
+
+                if task.get("paused"):
+                    task["status"] = "paused"
+                    task["updated_at"] = time.time()
+                    need_sleep = True
+                else:
+                    current_video = videos[current_index]
+                    current_video["status"] = "learning"
+                    task["current_video"] = current_video.get("title")
+                    task["status"] = "running"
+                    task["message"] = "Task is running"
+                    speed = float(task.get("speed") or 1.0)
+                    need_sleep = False
+
+            if need_sleep:
+                time.sleep(0.3)
+                continue
+
+            steps = 5
+            paused_midway = False
+            for step in range(1, steps + 1):
+                with self._task_lock:
+                    if not self._task_state or self._task_state.get("task_id") != task_id:
+                        return
+                    task = self._task_state
+
+                    if task.get("cancelled"):
+                        task["status"] = "cancelled"
+                        task["message"] = "Task cancelled"
+                        task["updated_at"] = time.time()
+                        return
+
+                    if task.get("paused"):
+                        task["status"] = "paused"
+                        task["updated_at"] = time.time()
+                        paused_midway = True
+                        break
+
+                    task_videos = task.get("videos", [])
+                    if current_index < len(task_videos):
+                        task_videos[current_index]["progress"] = step * 20
+
+                    completed = int(task.get("completed") or 0)
+                    total = int(task.get("total") or 0)
+                    if total > 0:
+                        task["percentage"] = round(((completed + step / steps) / total) * 100, 2)
+                    task["updated_at"] = time.time()
+
+                time.sleep(max(0.15, 0.35 / max(speed, 0.1)))
+
+            if paused_midway:
+                continue
+
+            with self._task_lock:
+                if not self._task_state or self._task_state.get("task_id") != task_id:
+                    return
+                task = self._task_state
+                if task.get("cancelled"):
+                    task["status"] = "cancelled"
+                    task["message"] = "Task cancelled"
+                    task["updated_at"] = time.time()
+                    return
+                if task.get("paused"):
+                    continue
+
+                task_videos = task.get("videos", [])
+                if current_index < len(task_videos):
+                    task_videos[current_index]["status"] = "completed"
+                    task_videos[current_index]["progress"] = 100
+
+                task["completed"] = int(task.get("completed") or 0) + 1
+                total = int(task.get("total") or 0)
+                task["percentage"] = round((task["completed"] / total) * 100, 2) if total > 0 else 0.0
+                task["updated_at"] = time.time()
+
+            current_index += 1

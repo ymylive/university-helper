@@ -1,0 +1,23 @@
+# -*- coding: utf-8 -*-
+"""Constants for Chaoxing service"""
+
+# Rate limiting
+DEFAULT_RATE_LIMIT = 0.5
+VIDEO_LOG_RATE_LIMIT = 2.0
+
+# Video processing
+VIDEO_WAIT_TIME_MIN = 30
+VIDEO_WAIT_TIME_MAX = 90
+VIDEO_SLEEP_THRESHOLD = 1
+
+# Retry settings
+MAX_FORBIDDEN_RETRY = 2
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAY = 1
+
+# Thread pool settings
+CARD_FETCH_WORKERS = 7
+DEFAULT_AI_CONCURRENCY = 3
+
+# Time multipliers
+MILLISECONDS_MULTIPLIER = 1000

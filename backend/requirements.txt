@@ -1,0 +1,17 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+psycopg2-binary==2.9.9
+PyJWT==2.8.0
+bcrypt==4.1.2
+python-multipart==0.0.6
+pycryptodome==3.19.0
+requests==2.31.0
+beautifulsoup4==4.14.3
+lxml==6.0.2
+tqdm==4.67.3
+loguru==0.7.3
+httpx==0.28.1
+pyaes==1.6.1
+fonttools==4.61.1
