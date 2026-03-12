@@ -1,31 +1,31 @@
-**Language:** English | [简体中文](./DEPLOY_MANUAL.zh-CN.md)
+**语言：** [English](./DEPLOY_MANUAL.md) | 简体中文
 
-# Manual Deployment
+# 手动部署
 
-If you do not want to use the automation scripts, follow these minimal manual deployment steps.
+如果不想使用自动化脚本，可以按下面这组最小步骤手动部署。
 
-## 1. Connect to the Server
+## 1. 连接服务器
 
 ```bash
 ssh user@your-server
 ```
 
-## 2. Create the Project Directory
+## 2. 创建项目目录
 
 ```bash
 mkdir -p /opt/easy_learning
 cd /opt/easy_learning
 ```
 
-## 3. Upload the Project
+## 3. 上传项目
 
-Run on your local machine:
+在本地执行：
 
 ```bash
 rsync -avz ./ user@your-server:/opt/easy_learning/
 ```
 
-Recommended exclusions:
+建议排除以下本地产物：
 
 - `node_modules`
 - `dist`
@@ -33,9 +33,9 @@ Recommended exclusions:
 - `.pytest_cache`
 - `%TEMP%`
 
-## 4. Write Environment Variables
+## 4. 写入环境变量
 
-Create `.env` on the server:
+在服务器上创建 `.env`：
 
 ```bash
 cat > .env <<'EOF'
@@ -46,38 +46,38 @@ CORS_ORIGINS=["http://localhost:3000","http://localhost:5173"]
 EOF
 ```
 
-## 5. Start the Services
+## 5. 启动服务
 
 ```bash
 docker compose -f docker-compose.server.yml up -d --build
 ```
 
-## 6. Verify
+## 6. 验证
 
 ```bash
 docker compose -f docker-compose.server.yml ps
 docker compose -f docker-compose.server.yml logs --tail=100
 ```
 
-## 7. Common Issues
+## 7. 常见问题
 
-### Port already in use
+### 端口已被占用
 
-Check your reverse proxy or existing host services.
+检查反向代理或宿主机上已有服务。
 
-### Database did not start
+### 数据库未启动
 
 ```bash
 docker compose -f docker-compose.server.yml logs postgres
 ```
 
-### App failed to start
+### 应用启动失败
 
 ```bash
 docker compose -f docker-compose.server.yml logs app
 ```
 
-## Related Docs
+## 相关文档
 
-- [`DEPLOY_GUIDE.md`](./DEPLOY_GUIDE.md)
-- [`README.md`](./README.md)
+- [`DEPLOY_GUIDE.zh-CN.md`](./DEPLOY_GUIDE.zh-CN.md)
+- [`README.zh-CN.md`](./README.zh-CN.md)

@@ -84,7 +84,7 @@ npm run dev
 
 - [`docker-compose.server.yml`](./docker-compose.server.yml)
 - [`Dockerfile.server`](./Dockerfile.server)
-- [`DEPLOY_GUIDE.md`](./DEPLOY_GUIDE.md)
+- [`DEPLOY_GUIDE.zh-CN.md`](./DEPLOY_GUIDE.zh-CN.md)
 
 快速启动：
 

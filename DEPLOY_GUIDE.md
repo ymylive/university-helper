@@ -1,68 +1,75 @@
-# 部署指南
+**Language:** English | [简体中文](./DEPLOY_GUIDE.zh-CN.md)
 
-这份文档针对当前仓库推荐的后端部署方式：`docker-compose.server.yml`。
+# Deployment Guide
 
-## 需要准备
+This guide covers the recommended server-side deployment path for the current repository: `docker-compose.server.yml`.
+
+## Requirements
 
 - Docker 24+
 - Docker Compose v2
-- 可访问的 Linux 服务器
-- PostgreSQL 数据卷存储空间
+- A reachable Linux server
+- Persistent storage for PostgreSQL volumes
 
-## 1. 上传代码
+## 1. Upload the Repository
 
-把整个仓库上传到服务器，例如：
+Upload the repository to your server, for example:
 
 ```bash
 rsync -avz ./ user@your-server:/opt/easy_learning/
 ```
 
-或直接使用仓库里的部署脚本：
+You can also use the deployment helpers included in this repository:
 
 - [`deploy.sh`](./deploy.sh)
 - [`deploy.ps1`](./deploy.ps1)
 - [`deploy_auto.py`](./deploy_auto.py)
 - [`deploy_pure.py`](./deploy_pure.py)
 
-这些脚本不再包含任何硬编码凭据，统一从环境变量读取目标服务器与密码。
+These scripts no longer contain embedded credentials. They read target server and secret values from environment variables.
 
-## 2. 创建 `.env`
+## 2. Create `.env`
 
-从 [`.env.example`](./.env.example) 复制：
+Copy from [`.env.example`](./.env.example):
 
 ```bash
 cp .env.example .env
 ```
 
-至少修改以下变量：
+At minimum, review and update:
 
 - `POSTGRES_PASSWORD`
 - `SECRET_KEY`
 - `CORS_ORIGINS`
-- `SHUAKE_COMPAT_SECRET`（如不需要可留空）
+- `SHUAKE_COMPAT_SECRET` if needed
 
-## 3. 启动服务
+## 3. Start the Services
 
 ```bash
 docker compose -f docker-compose.server.yml up -d --build
 ```
 
-查看状态：
+Check status:
 
 ```bash
 docker compose -f docker-compose.server.yml ps
 docker compose -f docker-compose.server.yml logs -f
 ```
 
-## 4. 更新服务
+## 4. Update an Existing Deployment
 
 ```bash
 git pull
 docker compose -f docker-compose.server.yml up -d --build
 ```
 
-## 5. 建议
+## 5. Recommendations
 
-- 反向代理与 HTTPS 建议交给外层 Nginx 或 Caddy
-- 首次部署后立即更换数据库密码和 JWT 密钥
-- 不要把 `.env`、服务器地址或任何口令提交回仓库
+- Put HTTPS and reverse proxy handling behind an outer Nginx or Caddy layer
+- Rotate database passwords and JWT secrets before first public use
+- Never commit `.env`, server addresses, or any real secrets back into the repository
+
+## Related Docs
+
+- [`DEPLOY_MANUAL.md`](./DEPLOY_MANUAL.md)
+- [`README.md`](./README.md)
