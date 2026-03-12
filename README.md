@@ -74,15 +74,15 @@ The Vite dev server listens on `http://localhost:3000` by default and proxies `/
 
 ### 3. Database
 
-Use PostgreSQL 15+ and initialize the schema from the files under [`database/`](/E:/project/sign_in/easy_learning/database).
+Use PostgreSQL 15+ and initialize the schema from the files under [`database/`](./database).
 
 ## Recommended Deployment Path
 
 For server deployment, use:
 
-- [`docker-compose.server.yml`](/E:/project/sign_in/easy_learning/docker-compose.server.yml)
-- [`Dockerfile.server`](/E:/project/sign_in/easy_learning/Dockerfile.server)
-- [`DEPLOY_GUIDE.md`](/E:/project/sign_in/easy_learning/DEPLOY_GUIDE.md)
+- [`docker-compose.server.yml`](./docker-compose.server.yml)
+- [`Dockerfile.server`](./Dockerfile.server)
+- [`DEPLOY_GUIDE.md`](./DEPLOY_GUIDE.md)
 
 Quick start:
 

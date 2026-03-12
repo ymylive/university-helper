@@ -19,16 +19,16 @@ rsync -avz ./ user@your-server:/opt/easy_learning/
 
 或直接使用仓库里的部署脚本：
 
-- [`deploy.sh`](/E:/project/sign_in/easy_learning/deploy.sh)
-- [`deploy.ps1`](/E:/project/sign_in/easy_learning/deploy.ps1)
-- [`deploy_auto.py`](/E:/project/sign_in/easy_learning/deploy_auto.py)
-- [`deploy_pure.py`](/E:/project/sign_in/easy_learning/deploy_pure.py)
+- [`deploy.sh`](./deploy.sh)
+- [`deploy.ps1`](./deploy.ps1)
+- [`deploy_auto.py`](./deploy_auto.py)
+- [`deploy_pure.py`](./deploy_pure.py)
 
 这些脚本不再包含任何硬编码凭据，统一从环境变量读取目标服务器与密码。
 
 ## 2. 创建 `.env`
 
-从 [` .env.example`](/E:/project/sign_in/easy_learning/.env.example) 复制：
+从 [`.env.example`](./.env.example) 复制：
 
 ```bash
 cp .env.example .env
