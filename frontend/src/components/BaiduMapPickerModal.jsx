@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MapPin, Search, X, Loader2 } from 'lucide-react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { getToken } from '../utils/auth'
 
 const DEFAULT_CENTER = [39.9042, 116.4074]
 const DEFAULT_ZOOM = 15
@@ -17,8 +18,9 @@ L.Icon.Default.mergeOptions({
 })
 
 const fetchJson = async (url) => {
+  const token = getToken()
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) throw new Error('请求失败')
   return res.json()

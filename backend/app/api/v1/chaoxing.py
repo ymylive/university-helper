@@ -254,13 +254,7 @@ async def _run_blocking(func, *args, **kwargs):
 
 
 @router.get("/location/geocode")
-async def chaoxing_location_geocode(
-    query: str, current_user: dict = Depends(get_current_user)
-):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
+async def chaoxing_location_geocode(query: str):
     keyword = query.strip()
     if not keyword:
         raise HTTPException(status_code=422, detail="query is required")
@@ -293,13 +287,7 @@ async def chaoxing_location_geocode(
 
 
 @router.get("/location/search")
-async def chaoxing_location_search(
-    query: str, current_user: dict = Depends(get_current_user)
-):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
+async def chaoxing_location_search(query: str):
     keyword = query.strip()
     if not keyword:
         raise HTTPException(status_code=422, detail="query is required")
@@ -338,12 +326,7 @@ async def chaoxing_location_search(
 
 
 @router.get("/location/reverse-geocode")
-async def chaoxing_location_reverse_geocode(
-    lat: float, lng: float, current_user: dict = Depends(get_current_user)
-):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
+async def chaoxing_location_reverse_geocode(lat: float, lng: float):
 
     data = await _run_blocking(
         _request_photon_json,

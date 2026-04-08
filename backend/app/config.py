@@ -4,6 +4,9 @@ from typing import Optional
 PUBLIC_ROUTES = [
     "/api/v1/auth/register",
     "/api/v1/auth/login",
+    "/api/v1/chaoxing/location/geocode",
+    "/api/v1/chaoxing/location/search",
+    "/api/v1/chaoxing/location/reverse-geocode",
     "/docs",
     "/openapi.json",
     "/",
