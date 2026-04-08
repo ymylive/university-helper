@@ -15,6 +15,7 @@ import {
 import { Input } from '../components'
 import { api } from '../utils/api'
 import { isAuthenticated, removeToken } from '../utils/auth'
+import { applyCourseProgressToTaskRecords } from '../utils/zhihuishuTasks'
 
 const QR_POLL_INTERVAL_MS = 2000
 const DEFAULT_PROGRESS_POLL_SECONDS = 5
@@ -575,20 +576,14 @@ export default function Zhihuishu() {
       }
 
       setProgress(normalizedProgress)
-      setTaskRecords((prev) => prev.map((task) => {
-        if (task.courseId !== courseId) return task
-        return normalizeTaskRecord({
-          task_id: task.taskId,
-          task_type: task.taskType,
-          course_id: task.courseId,
-          course_name: task.courseName,
-          status: statusValue,
-          message: messageValue,
-          current_video: currentVideo,
-          updated_at: new Date().toISOString(),
-          progress: normalizedProgress
-        }, task) || task
-      }))
+      setTaskRecords((prev) =>
+        applyCourseProgressToTaskRecords(prev, {
+          courseId,
+          activeTaskId,
+          progress: normalizedProgress,
+          updatedAt: new Date().toISOString()
+        })
+      )
       if (!silent) {
         setNoticeMessage('success', '课程进度已刷新。')
       }
@@ -601,7 +596,7 @@ export default function Zhihuishu() {
     } finally {
       setProgressLoading(false)
     }
-  }, [setNoticeMessage])
+  }, [activeTaskId, setNoticeMessage])
 
   const fetchTaskDetail = useCallback(async (taskId, silent = false) => {
     if (!taskId) return null

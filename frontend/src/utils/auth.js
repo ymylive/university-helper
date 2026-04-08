@@ -1,30 +1,43 @@
 const TOKEN_KEY = 'auth_token'
 const SHUAKE_TOKEN_KEY = 'shuake_token'
 
+const readLegacyToken = (key) => {
+  const legacyValue = window.localStorage.getItem(key)
+  if (!legacyValue) return null
+  window.sessionStorage.setItem(key, legacyValue)
+  window.localStorage.removeItem(key)
+  return legacyValue
+}
+
 export const setToken = (token, shuakeToken) => {
-  localStorage.setItem(TOKEN_KEY, token)
+  window.sessionStorage.setItem(TOKEN_KEY, token)
+  window.localStorage.removeItem(TOKEN_KEY)
   if (shuakeToken || token) {
-    localStorage.setItem(SHUAKE_TOKEN_KEY, shuakeToken || token)
+    window.sessionStorage.setItem(SHUAKE_TOKEN_KEY, shuakeToken || token)
+    window.localStorage.removeItem(SHUAKE_TOKEN_KEY)
   }
 }
 
 export const getToken = () => {
-  return localStorage.getItem(TOKEN_KEY)
+  return window.sessionStorage.getItem(TOKEN_KEY) || readLegacyToken(TOKEN_KEY)
 }
 
 export const getShuakeToken = () => {
-  return localStorage.getItem(SHUAKE_TOKEN_KEY)
+  return window.sessionStorage.getItem(SHUAKE_TOKEN_KEY) || readLegacyToken(SHUAKE_TOKEN_KEY)
 }
 
 export const setShuakeToken = (token) => {
   if (token) {
-    localStorage.setItem(SHUAKE_TOKEN_KEY, token)
+    window.sessionStorage.setItem(SHUAKE_TOKEN_KEY, token)
+    window.localStorage.removeItem(SHUAKE_TOKEN_KEY)
   }
 }
 
 export const removeToken = () => {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(SHUAKE_TOKEN_KEY)
+  window.localStorage.removeItem(TOKEN_KEY)
+  window.localStorage.removeItem(SHUAKE_TOKEN_KEY)
+  window.sessionStorage.removeItem(TOKEN_KEY)
+  window.sessionStorage.removeItem(SHUAKE_TOKEN_KEY)
 }
 
 export const isAuthenticated = () => {

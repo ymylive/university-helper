@@ -1,0 +1,93 @@
+<h2>百度地图选点弹窗</h2>
+<p class="subtitle">共用于位置签到和二维码签到，支持搜索、地图点击、逆地理编码和确认回填</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Chaoxing Signin Form</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="placeholder">纬度输入框</div>
+        <div class="placeholder">经度输入框</div>
+      </div>
+      <div style="margin-top:12px;" class="placeholder">地址输入框</div>
+      <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;">
+        <button class="mock-button">解析坐标</button>
+        <button class="mock-button" style="background:#0f766e;color:#fff;">地图选点</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">地图选点弹窗</div>
+    <div class="mockup-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px;">
+        <div>
+          <div class="label">Step 1</div>
+          <h3 style="margin:0;">搜索地点或直接点击地图</h3>
+        </div>
+        <button class="mock-button">关闭</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:320px 1fr;gap:16px;">
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <input class="mock-input" value="北京大学" />
+          <button class="mock-button">搜索地点</button>
+
+          <div style="border:1px solid rgba(15,23,42,0.12);border-radius:16px;padding:12px;background:#fff;">
+            <div class="label">搜索结果</div>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+              <div style="padding:12px;border-radius:12px;background:#f8fafc;border:1px solid rgba(15,23,42,0.08);">
+                <strong>北京大学</strong>
+                <div style="font-size:13px;color:#475569;margin-top:4px;">北京市 海淀区 颐和园路5号</div>
+              </div>
+              <div style="padding:12px;border-radius:12px;background:#f8fafc;border:1px solid rgba(15,23,42,0.08);">
+                <strong>北京大学东门</strong>
+                <div style="font-size:13px;color:#475569;margin-top:4px;">北京市 海淀区 成府路</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="border:1px solid rgba(15,23,42,0.12);border-radius:16px;padding:12px;background:#ecfeff;">
+            <div class="label">当前预览</div>
+            <div style="font-size:14px;margin-top:8px;"><strong>地址:</strong> 北京市海淀区颐和园路5号</div>
+            <div style="font-size:14px;margin-top:6px;"><strong>纬度:</strong> 39.9928</div>
+            <div style="font-size:14px;margin-top:6px;"><strong>经度:</strong> 116.3055</div>
+            <div style="font-size:14px;margin-top:6px;"><strong>来源:</strong> 搜索结果或地图点击后逆地理编码</div>
+          </div>
+        </div>
+
+        <div style="border-radius:18px;overflow:hidden;border:1px solid rgba(15,23,42,0.12);background:linear-gradient(135deg,#dbeafe,#cffafe 50%,#fef3c7);min-height:420px;position:relative;">
+          <div style="position:absolute;inset:0;padding:20px;">
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;opacity:0.3;">
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+              <div class="placeholder"></div>
+            </div>
+            <div style="position:absolute;left:58%;top:42%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:999px;background:#dc2626;box-shadow:0 0 0 6px rgba(220,38,38,0.18);"></div>
+            <div style="position:absolute;left:56%;top:56%;background:#ffffff;border:1px solid rgba(15,23,42,0.12);border-radius:14px;padding:12px 14px;max-width:260px;box-shadow:0 14px 30px rgba(15,23,42,0.12);">
+              <div class="label">Step 2</div>
+              <strong>地图点击后预览</strong>
+              <div style="font-size:13px;color:#475569;margin-top:6px;">点击任意点后更新 marker，并触发逆地理编码生成可读地址。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px;">
+        <button class="mock-button">取消</button>
+        <button class="mock-button" style="background:#0f766e;color:#fff;">确认选点</button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,16 +1,29 @@
+import asyncio
 import base64
 import json
 from typing import Any, Dict, List, Optional
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.config import settings
 from app.dependencies import get_current_user
 from app.services.course.chaoxing.signin import signin_manager
 
 router = APIRouter()
-SUPPORTED_SIGN_TYPES = {"all", "normal", "photo", "location", "qrcode", "gesture", "code"}
+NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
+NOMINATIM_HEADERS = {"User-Agent": "UniversityHelper/1.0"}
+SUPPORTED_SIGN_TYPES = {
+    "all",
+    "normal",
+    "photo",
+    "location",
+    "qrcode",
+    "gesture",
+    "code",
+}
 SIGN_TYPE_ALIASES = {
     "qr": "qrcode",
     "qr_code": "qrcode",
@@ -71,6 +84,25 @@ class ChaoxingStartRequest(BaseModel):
     photo_base64: Optional[str] = None
     photo: Optional[str] = None
     altitude: Optional[float] = None
+
+
+def _request_nominatim_json(path: str, params: Dict[str, Any]) -> Any:
+    url = f"{NOMINATIM_BASE_URL}{path}"
+    params["format"] = "json"
+    try:
+        response = requests.get(url, params=params, headers=NOMINATIM_HEADERS, timeout=12)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Geocoding service request failed: {exc}"
+        ) from exc
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502, detail="Invalid geocoding service response"
+        ) from exc
 
 
 def _parse_form_value(value: str) -> Any:
@@ -169,12 +201,18 @@ def _normalize_sign_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _ensure_supported_sign_type(sign_type: str) -> None:
     if sign_type not in SUPPORTED_SIGN_TYPES:
         valid = ", ".join(sorted(SUPPORTED_SIGN_TYPES))
-        raise HTTPException(status_code=422, detail=f"Unsupported sign_type: {sign_type}. Valid: {valid}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported sign_type: {sign_type}. Valid: {valid}",
+        )
 
 
 async def _parse_request_payload(raw_request: Request) -> Dict[str, Any]:
     content_type = (raw_request.headers.get("content-type") or "").lower()
-    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+    if (
+        "multipart/form-data" in content_type
+        or "application/x-www-form-urlencoded" in content_type
+    ):
         form = await raw_request.form()
         payload: Dict[str, Any] = {}
         for key, value in form.multi_items():
@@ -182,7 +220,9 @@ async def _parse_request_payload(raw_request: Request) -> Dict[str, Any]:
                 if key == "photo":
                     file_bytes = await value.read()
                     if file_bytes:
-                        payload["photo_base64"] = base64.b64encode(file_bytes).decode("utf-8")
+                        payload["photo_base64"] = base64.b64encode(file_bytes).decode(
+                            "utf-8"
+                        )
                 continue
             payload[key] = _parse_form_value(str(value))
         return payload
@@ -201,6 +241,108 @@ def _validate_payload(model_cls: Any, payload: Dict[str, Any]) -> BaseModel:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
 
+async def _run_blocking(func, *args, **kwargs):
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
+@router.get("/location/geocode")
+async def chaoxing_location_geocode(
+    query: str, current_user: dict = Depends(get_current_user)
+):
+    user_id = str(current_user.get("user_id") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    keyword = query.strip()
+    if not keyword:
+        raise HTTPException(status_code=422, detail="query is required")
+
+    results = await _run_blocking(
+        _request_nominatim_json,
+        "/search",
+        {"q": keyword, "limit": 1, "accept-language": "zh-CN"},
+    )
+    if not isinstance(results, list) or len(results) == 0:
+        raise HTTPException(status_code=404, detail="未找到可用坐标")
+
+    hit = results[0]
+    return {
+        "status": True,
+        "message": "ok",
+        "data": {
+            "result": {
+                "formatted_address": str(hit.get("display_name") or "").strip(),
+                "location": {"lat": float(hit["lat"]), "lng": float(hit["lon"])},
+            }
+        },
+    }
+
+
+@router.get("/location/search")
+async def chaoxing_location_search(
+    query: str, current_user: dict = Depends(get_current_user)
+):
+    user_id = str(current_user.get("user_id") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    keyword = query.strip()
+    if not keyword:
+        raise HTTPException(status_code=422, detail="query is required")
+
+    results = await _run_blocking(
+        _request_nominatim_json,
+        "/search",
+        {"q": keyword, "limit": 10, "addressdetails": 1, "accept-language": "zh-CN"},
+    )
+    if not isinstance(results, list):
+        results = []
+
+    normalized = []
+    for index, item in enumerate(results):
+        try:
+            lat = float(item["lat"])
+            lon = float(item["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        normalized.append({
+            "id": str(item.get("place_id") or f"candidate-{index}"),
+            "name": str(item.get("display_name") or "").split(",")[0].strip(),
+            "address": str(item.get("display_name") or "").strip(),
+            "latitude": lat,
+            "longitude": lon,
+        })
+
+    return {
+        "status": True,
+        "message": "ok",
+        "data": {"results": normalized},
+    }
+
+
+@router.get("/location/reverse-geocode")
+async def chaoxing_location_reverse_geocode(
+    lat: float, lng: float, current_user: dict = Depends(get_current_user)
+):
+    user_id = str(current_user.get("user_id") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    result = await _run_blocking(
+        _request_nominatim_json,
+        "/reverse",
+        {"lat": lat, "lon": lng, "accept-language": "zh-CN"},
+    )
+    address = ""
+    if isinstance(result, dict):
+        address = str(result.get("display_name") or "").strip()
+    return {
+        "status": True,
+        "message": "ok",
+        "data": {"address": address, "latitude": lat, "longitude": lng},
+    }
+
+
 @router.post("/login")
 async def chaoxing_login(
     request: ChaoxingLoginRequest,
@@ -210,10 +352,23 @@ async def chaoxing_login(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    result = signin_manager.login(user_id=user_id, username=request.username, password=request.password)
+    result = await _run_blocking(
+        signin_manager.login,
+        user_id=user_id,
+        username=request.username,
+        password=request.password,
+    )
     if result.get("status"):
-        return {"status": True, "message": result.get("message", "ok"), "data": result.get("data", {})}
-    return {"status": False, "message": result.get("message", "Login failed"), "data": {}}
+        return {
+            "status": True,
+            "message": result.get("message", "ok"),
+            "data": result.get("data", {}),
+        }
+    return {
+        "status": False,
+        "message": result.get("message", "Login failed"),
+        "data": {},
+    }
 
 
 @router.get("/courses")
@@ -222,7 +377,7 @@ async def chaoxing_courses(current_user: dict = Depends(get_current_user)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    courses = signin_manager.get_courses(user_id)
+    courses = await _run_blocking(signin_manager.get_courses, user_id)
     return {
         "status": True,
         "message": "ok",
@@ -237,7 +392,9 @@ async def chaoxing_tasks(current_user: dict = Depends(get_current_user)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    tasks = signin_manager.get_active_tasks(user_id=user_id, sign_type="all")
+    tasks = await _run_blocking(
+        signin_manager.get_active_tasks, user_id=user_id, sign_type="all"
+    )
     return {"status": True, "message": "ok", "data": tasks}
 
 
@@ -247,7 +404,7 @@ async def chaoxing_task_list(current_user: dict = Depends(get_current_user)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    tasks = signin_manager.list_tasks(user_id=user_id)
+    tasks = await _run_blocking(signin_manager.list_tasks, user_id=user_id)
     return {"status": True, "message": "ok", "data": tasks}
 
 
@@ -257,7 +414,7 @@ async def chaoxing_history(current_user: dict = Depends(get_current_user)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    history = signin_manager.get_history(user_id)
+    history = await _run_blocking(signin_manager.get_history, user_id)
     return {"status": True, "message": "ok", "data": history}
 
 
@@ -273,7 +430,8 @@ async def chaoxing_sign(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    result = signin_manager.sign_once(
+    result = await _run_blocking(
+        signin_manager.sign_once,
         user_id=user_id,
         username=request.username,
         password=request.password,
@@ -300,7 +458,9 @@ async def chaoxing_start(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    task_id = signin_manager.start_task(user_id=user_id, payload=request.model_dump())
+    task_id = await _run_blocking(
+        signin_manager.start_task, user_id=user_id, payload=request.model_dump()
+    )
     return {
         "status": True,
         "message": "Task started",
@@ -314,7 +474,9 @@ async def chaoxing_task(task_id: str, current_user: dict = Depends(get_current_u
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    task = signin_manager.get_task(user_id=user_id, task_id=task_id)
+    task = await _run_blocking(
+        signin_manager.get_task, user_id=user_id, task_id=task_id
+    )
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"status": True, "message": "ok", "data": task}
@@ -326,7 +488,9 @@ async def chaoxing_logs(task_id: str, current_user: dict = Depends(get_current_u
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    logs = signin_manager.get_task_logs(user_id=user_id, task_id=task_id)
+    logs = await _run_blocking(
+        signin_manager.get_task_logs, user_id=user_id, task_id=task_id
+    )
     if logs is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"status": True, "message": "ok", "data": logs}

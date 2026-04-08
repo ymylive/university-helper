@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -13,6 +15,7 @@ from app.services.course.chaoxing.signin import signin_manager
 from app.services.course.zhihuishu.adapter import ZhihuishuAdapter
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 _QR_SESSION_TTL_SECONDS = 10 * 60
 _qr_sessions: Dict[str, Dict[str, Any]] = {}
 _qr_sessions_lock = threading.Lock()
@@ -79,6 +82,15 @@ class ZhihuishuConfigUpdateRequest(BaseModel):
     ai_config: Optional[Dict[str, Any]] = None
 
 
+def _internal_error(message: str, exc: Exception) -> HTTPException:
+    logger.exception("%s: %s", message, exc)
+    return HTTPException(status_code=500, detail=message)
+
+
+async def _run_blocking(func, *args, **kwargs):
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
 @router.post("/start", response_model=CourseStatusResponse)
 async def start_course_learning(
     request: CourseStartRequest,
@@ -93,7 +105,8 @@ async def start_course_learning(
     user_id = _current_user_id(current_user)
     try:
         learning_manager = _get_learning_manager()
-        task_id = learning_manager.start_task(
+        task_id = await _run_blocking(
+            learning_manager.start_task,
             user_id=user_id,
             payload={
                 "platform": request.platform,
@@ -121,7 +134,7 @@ async def start_course_learning(
             current_task="preparing",
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to start course learning task", exc) from exc
 
 
 @router.get("/status/{task_id}", response_model=CourseStatusResponse)
@@ -132,7 +145,7 @@ async def get_course_status(task_id: str, current_user: dict = Depends(get_curre
     chaoxing_task = None
     try:
         learning_manager = _get_learning_manager()
-        chaoxing_task = learning_manager.get_task(user_id=user_id, task_id=task_id)
+        chaoxing_task = await _run_blocking(learning_manager.get_task, user_id=user_id, task_id=task_id)
     except HTTPException as exc:
         if exc.status_code != 501:
             raise
@@ -154,7 +167,7 @@ async def get_course_status(task_id: str, current_user: dict = Depends(get_curre
         with _qr_sessions_lock:
             adapter = _user_adapters.get(user_id)
         if adapter is not None:
-            progress = adapter.get_progress(str(task.get("course_id") or ""))
+            progress = await _run_blocking(adapter.get_progress, str(task.get("course_id") or ""))
             task_status = progress.get("status", task.get("status", "running"))
             task_message = progress.get("message", task.get("message", "Task is running"))
             task = _update_course_task(
@@ -178,7 +191,7 @@ async def get_course_status(task_id: str, current_user: dict = Depends(get_curre
 async def get_course_tasks(current_user: dict = Depends(get_current_user)):
     user_id = _current_user_id(current_user)
     learning_manager = _get_learning_manager()
-    tasks = learning_manager.list_tasks(user_id=user_id)
+    tasks = await _run_blocking(learning_manager.list_tasks, user_id=user_id)
     return {"status": "success", "message": "ok", "data": tasks}
 
 
@@ -190,7 +203,7 @@ async def get_course_logs(
 ):
     user_id = _current_user_id(current_user)
     learning_manager = _get_learning_manager()
-    log_state = learning_manager.get_task_logs(user_id=user_id, task_id=task_id, cursor=cursor)
+    log_state = await _run_blocking(learning_manager.get_task_logs, user_id=user_id, task_id=task_id, cursor=cursor)
     if log_state is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return {
@@ -205,7 +218,7 @@ async def get_course_logs(
 async def pause_course_task(task_id: str, current_user: dict = Depends(get_current_user)):
     user_id = _current_user_id(current_user)
     learning_manager = _get_learning_manager()
-    result = learning_manager.pause_task(user_id=user_id, task_id=task_id)
+    result = await _run_blocking(learning_manager.pause_task, user_id=user_id, task_id=task_id)
     if result.get("status") == "error":
         raise HTTPException(status_code=404, detail=result.get("message", "Task not found"))
     return {"status": "success", "message": result.get("message", "Task paused"), "data": result}
@@ -215,7 +228,7 @@ async def pause_course_task(task_id: str, current_user: dict = Depends(get_curre
 async def resume_course_task(task_id: str, current_user: dict = Depends(get_current_user)):
     user_id = _current_user_id(current_user)
     learning_manager = _get_learning_manager()
-    result = learning_manager.resume_task(user_id=user_id, task_id=task_id)
+    result = await _run_blocking(learning_manager.resume_task, user_id=user_id, task_id=task_id)
     if result.get("status") == "error":
         raise HTTPException(status_code=404, detail=result.get("message", "Task not found"))
     return {"status": "success", "message": result.get("message", "Task resumed"), "data": result}
@@ -225,7 +238,7 @@ async def resume_course_task(task_id: str, current_user: dict = Depends(get_curr
 async def stop_course_task(task_id: str, current_user: dict = Depends(get_current_user)):
     user_id = _current_user_id(current_user)
     learning_manager = _get_learning_manager()
-    result = learning_manager.stop_task(user_id=user_id, task_id=task_id)
+    result = await _run_blocking(learning_manager.stop_task, user_id=user_id, task_id=task_id)
     if result.get("status") == "error":
         raise HTTPException(status_code=404, detail=result.get("message", "Task not found"))
     return {"status": "success", "message": result.get("message", "Task cancellation requested"), "data": result}
@@ -317,23 +330,6 @@ def _register_zhihuishu_course_task(
             "updated_at": time.time(),
         },
     )
-
-
-def _sync_zhihuishu_progress(user_id: str, course_id: str, progress: Dict[str, Any]) -> None:
-    with _course_tasks_lock:
-        for task_id, task in _course_tasks.items():
-            if (
-                str(task.get("user_id")) == user_id
-                and task.get("platform") == "zhihuishu"
-                and str(task.get("course_id")) == str(course_id)
-            ):
-                task["status"] = progress.get("status", task.get("status", "running"))
-                task["message"] = progress.get("message", task.get("message", "Task is running"))
-                task["progress"] = progress
-                task["current_task"] = progress.get("current_video")
-                task["updated_at"] = time.time()
-                _course_tasks[task_id] = task
-                break
 
 
 router.include_router(chaoxing_router, prefix="/chaoxing", tags=["chaoxing"])
@@ -449,13 +445,13 @@ async def zhihuishu_password_login(
 
     adapter = ZhihuishuAdapter()
     try:
-        result = adapter.login_with_password(request.username, request.password)
+        result = await _run_blocking(adapter.login_with_password, request.username, request.password)
         if not result.get("success"):
             raise HTTPException(status_code=401, detail="Login failed")
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise HTTPException(status_code=401, detail="Zhihuishu login failed") from exc
 
     with _qr_sessions_lock:
         _user_adapters[user_id] = adapter
@@ -479,11 +475,11 @@ async def zhihuishu_status(current_user: dict = Depends(get_current_user)):
 
     try:
         if hasattr(adapter, "get_status"):
-            data = adapter.get_status()
+            data = await _run_blocking(adapter.get_status)
         else:
             data = {"logged_in": True, "status": "online", "has_task": False, "current_task": None}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Zhihuishu status", exc) from exc
 
     return {"status": "success", "message": "ok", "data": data}
 
@@ -495,9 +491,9 @@ async def zhihuishu_logout(current_user: dict = Depends(get_current_user)):
     if adapter is not None:
         try:
             if hasattr(adapter, "logout"):
-                adapter.logout()
+                await _run_blocking(adapter.logout)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise _internal_error("Failed to logout from Zhihuishu", exc) from exc
 
     with _qr_sessions_lock:
         _user_adapters.pop(user_id, None)
@@ -525,9 +521,9 @@ async def zhihuishu_get_courses(current_user: dict = Depends(get_current_user)):
     adapter = _get_zhihuishu_adapter(user_id)
 
     try:
-        courses = adapter.get_courses()
+        courses = await _run_blocking(adapter.get_courses)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Zhihuishu courses", exc) from exc
 
     return {
         "status": "success",
@@ -543,9 +539,9 @@ async def zhihuishu_get_grouped_courses(current_user: dict = Depends(get_current
     adapter = _get_zhihuishu_adapter(user_id)
 
     try:
-        groups = adapter.get_grouped_courses()
+        groups = await _run_blocking(adapter.get_grouped_courses)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load grouped Zhihuishu courses", exc) from exc
 
     return {
         "status": "success",
@@ -561,12 +557,12 @@ async def zhihuishu_get_course_detail(course_id: str, current_user: dict = Depen
     adapter = _get_zhihuishu_adapter(user_id)
 
     try:
-        detail = adapter.get_course_detail(course_id)
+        detail = await _run_blocking(adapter.get_course_detail, course_id)
     except Exception as exc:
         detail_text = str(exc)
         if "not found" in detail_text.lower():
             raise HTTPException(status_code=404, detail="Course not found") from exc
-        raise HTTPException(status_code=500, detail=detail_text) from exc
+        raise _internal_error("Failed to load course detail", exc) from exc
 
     return {"status": "success", "message": "Course detail loaded", "data": detail}
 
@@ -594,7 +590,7 @@ async def zhihuishu_start_course(
                 auto_answer=request.auto_answer,
             )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to start Zhihuishu task", exc) from exc
 
     task_id = str(result.get("task_id") or uuid4().hex)
     progress = result.get("progress", {})
@@ -637,7 +633,7 @@ async def zhihuishu_start_course_task(
                 auto_answer=auto_answer,
             )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to start Zhihuishu course task", exc) from exc
 
     task_id = str(result.get("task_id") or uuid4().hex)
     progress = result.get("progress", {})
@@ -666,7 +662,7 @@ async def zhihuishu_start_ai_course_task(
                 auto_answer=True,
             )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to start Zhihuishu AI course task", exc) from exc
 
     task_id = str(result.get("task_id") or uuid4().hex)
     progress = result.get("progress", {})
@@ -694,7 +690,7 @@ async def zhihuishu_list_tasks(
                     if str(task.get("user_id")) == user_id and task.get("platform") == "zhihuishu"
                 ]
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Zhihuishu tasks", exc) from exc
 
     return {"status": "success", "message": "Tasks loaded", "data": tasks, "tasks": tasks}
 
@@ -712,7 +708,7 @@ async def zhihuishu_get_task(task_id: str, current_user: dict = Depends(get_curr
             if task and (str(task.get("user_id")) != user_id or task.get("platform") != "zhihuishu"):
                 task = None
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Zhihuishu task", exc) from exc
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -756,7 +752,7 @@ async def zhihuishu_get_config(current_user: dict = Depends(get_current_user)):
         else:
             config = {"speed": 1.0, "auto_answer": True, "ai_config": {"enabled": False}}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Zhihuishu config", exc) from exc
 
     return {"status": "success", "message": "Config loaded", "data": config, "config": config}
 
@@ -776,7 +772,7 @@ async def zhihuishu_update_config(
         else:
             config = updates
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to update Zhihuishu config", exc) from exc
 
     return {"status": "success", "message": "Config updated", "data": config, "config": config}
 
@@ -798,9 +794,9 @@ async def zhihuishu_get_videos(
     adapter = _get_zhihuishu_adapter(user_id)
 
     try:
-        videos = adapter.get_videos(course_id)
+        videos = await _run_blocking(adapter.get_videos, course_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Zhihuishu videos", exc) from exc
 
     return {
         "status": "success",
@@ -819,12 +815,9 @@ async def zhihuishu_get_progress(
     adapter = _get_zhihuishu_adapter(user_id)
 
     try:
-        progress = adapter.get_progress(course_id)
+        progress = await _run_blocking(adapter.get_progress, course_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    # Keep /course/status/{task_id} synchronized with progress polling.
-    _sync_zhihuishu_progress(user_id=user_id, course_id=course_id, progress=progress)
+        raise _internal_error("Failed to load Zhihuishu progress", exc) from exc
 
     response = {
         "status": progress.get("status", "idle"),
@@ -917,7 +910,7 @@ async def course_login(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to login and load Chaoxing courses", exc) from exc
 
 
 @router.get("/courses")
@@ -927,7 +920,7 @@ async def get_courses(
 ):
     del db
     user_id = _current_user_id(current_user)
-    courses = signin_manager.get_courses(user_id)
+    courses = await _run_blocking(signin_manager.get_courses, user_id)
     return {
         "status": "success",
         "message": "ok",
@@ -953,20 +946,21 @@ async def get_chapters(
         courseid, clazzid = course_parts[0], course_parts[1]
         cpi = course_parts[2] if len(course_parts) >= 3 else ""
         if not cpi:
-            for item in signin_manager.get_courses(user_id):
+            for item in await _run_blocking(signin_manager.get_courses, user_id):
                 if str(item.get("courseId")) == str(courseid) and str(item.get("classId")) == str(clazzid):
                     cpi = str(item.get("cpi") or "")
                     break
         if not cpi:
             raise HTTPException(status_code=400, detail="Missing cpi in course_id")
 
-        client = signin_manager.get_client(user_id)
+        client = await _run_blocking(signin_manager.get_client, user_id)
         if client is None:
             raise HTTPException(status_code=401, detail="Please login to Chaoxing first")
 
         from app.services.course.chaoxing.decode import decode_course_point
 
-        response = client.session.get(
+        response = await _run_blocking(
+            client.session.get,
             "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/studentcourse",
             params={
                 "courseid": courseid,
@@ -985,7 +979,7 @@ async def get_chapters(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _internal_error("Failed to load Chaoxing chapters", exc) from exc
 
 
 @router.post("/notify/test")

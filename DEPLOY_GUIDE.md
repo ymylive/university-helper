@@ -2,7 +2,7 @@
 
 # Deployment Guide
 
-This guide covers the recommended server-side deployment path for the current repository: `docker-compose.server.yml`.
+This guide covers the recommended server-side deployment path for the current repository: `docker-compose.yml`.
 
 ## Requirements
 
@@ -46,21 +46,21 @@ At minimum, review and update:
 ## 3. Start the Services
 
 ```bash
-docker compose -f docker-compose.server.yml up -d --build
+docker compose -f docker-compose.yml up -d --build
 ```
 
 Check status:
 
 ```bash
-docker compose -f docker-compose.server.yml ps
-docker compose -f docker-compose.server.yml logs -f
+docker compose -f docker-compose.yml ps
+docker compose -f docker-compose.yml logs -f
 ```
 
 ## 4. Update an Existing Deployment
 
 ```bash
 git pull
-docker compose -f docker-compose.server.yml up -d --build
+docker compose -f docker-compose.yml up -d --build
 ```
 
 ## 5. Recommendations
@@ -68,6 +68,42 @@ docker compose -f docker-compose.server.yml up -d --build
 - Put HTTPS and reverse proxy handling behind an outer Nginx or Caddy layer
 - Rotate database passwords and JWT secrets before first public use
 - Never commit `.env`, server addresses, or any real secrets back into the repository
+
+## 6. Finalize Legacy Cutover
+
+After the new stack is running and verified, you can execute the server-side cutover helper on the server:
+
+```bash
+chmod +x scripts/server_finalize_shuake_cutover.sh
+REMOVE_LEGACY_DB_CONTAINER=true ./scripts/server_finalize_shuake_cutover.sh
+```
+
+Default behavior:
+
+- backups the legacy DB
+- migrates `users` into the new DB if needed
+- points host Nginx to the new containerized frontend
+- removes the legacy app container
+- removes the legacy DB container only if `REMOVE_LEGACY_DB_CONTAINER=true`
+
+The legacy PostgreSQL volume is still retained after that step.
+
+## 7. Publish a Small Hotfix
+
+For small code-only fixes, use the hotfix helper instead of a full deployment:
+
+```bash
+export EASY_LEARNING_SERVER_IP=your-server-ip
+export EASY_LEARNING_SERVER_PASSWORD=your-password
+./scripts/hotfix_publish.sh backend/app/api/v1/course.py frontend/src/pages/Zhihuishu.jsx frontend/src/utils/zhihuishuTasks.js
+```
+
+Behavior:
+
+- syncs only the files you pass in
+- backend Python source changes are copied into the running app container and the app container is restarted
+- frontend or Nginx changes rebuild only `easy-learning-nginx`
+- dependency-layer changes such as `Dockerfile` or `backend/requirements.txt` trigger an app rebuild
 
 ## Related Docs
 

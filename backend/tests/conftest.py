@@ -14,6 +14,15 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def reset_auth_rate_limiter():
+    from app.middleware.rate_limiter import rate_limiter
+
+    rate_limiter.reset()
+    yield
+    rate_limiter.reset()
+
+
 @pytest.fixture
 def test_user():
     return {

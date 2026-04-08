@@ -4,7 +4,7 @@ set -euo pipefail
 SERVER="${EASY_LEARNING_SERVER:-}"
 PROJECT_NAME="${EASY_LEARNING_PROJECT_NAME:-easy_learning}"
 REMOTE_DIR="${EASY_LEARNING_REMOTE_DIR:-/opt/${PROJECT_NAME}}"
-COMPOSE_FILE="${EASY_LEARNING_COMPOSE_FILE:-docker-compose.server.yml}"
+COMPOSE_FILE="${EASY_LEARNING_COMPOSE_FILE:-docker-compose.yml}"
 DB_PASSWORD="${EASY_LEARNING_POSTGRES_PASSWORD:-change-this-db-password}"
 SECRET_KEY="${EASY_LEARNING_SECRET_KEY:-$(openssl rand -hex 32)}"
 SHUAKE_COMPAT_SECRET="${EASY_LEARNING_SHUAKE_COMPAT_SECRET:-}"
@@ -38,8 +38,8 @@ rsync -avz \
 scp "$tmp_env" "$SERVER:$REMOTE_DIR/.env"
 
 echo "Starting deployment with ${COMPOSE_FILE}"
-ssh "$SERVER" "cd '$REMOTE_DIR' && docker compose -f '$COMPOSE_FILE' down || true"
-ssh "$SERVER" "cd '$REMOTE_DIR' && docker compose -f '$COMPOSE_FILE' up -d --build"
-ssh "$SERVER" "cd '$REMOTE_DIR' && docker compose -f '$COMPOSE_FILE' ps"
+ssh "$SERVER" "cd '$REMOTE_DIR' && compose_cmd=\$(command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo 'docker compose') && \$compose_cmd -f '$COMPOSE_FILE' down || true"
+ssh "$SERVER" "cd '$REMOTE_DIR' && compose_cmd=\$(command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo 'docker compose') && \$compose_cmd -f '$COMPOSE_FILE' up -d --build"
+ssh "$SERVER" "cd '$REMOTE_DIR' && compose_cmd=\$(command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo 'docker compose') && \$compose_cmd -f '$COMPOSE_FILE' ps"
 
 echo "Deployment finished."

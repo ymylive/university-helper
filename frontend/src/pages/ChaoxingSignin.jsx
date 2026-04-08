@@ -2,11 +2,17 @@
 
 import { useNavigate } from 'react-router-dom'
 
-import { AlertCircle, CheckCircle2, Loader2, Camera, MapPin, QrCode, CheckSquare, Clock, TrendingUp, RefreshCw } from 'lucide-react'
+import jsQR from 'jsqr'
+
+import { AlertCircle, CheckCircle2, Loader2, Camera, MapPin, QrCode, CheckSquare, Clock, TrendingUp, RefreshCw, Upload } from 'lucide-react'
 
 import { getToken, isAuthenticated, removeToken } from '../utils/auth'
 
 import { Button, Input } from '../components'
+
+import { resolveBaiduAddress, searchBaiduPlaces } from '../services/baiduLocation'
+
+import BaiduMapPickerModal from '../components/BaiduMapPickerModal'
 
 
 
@@ -35,10 +41,6 @@ const GLASS_CARD_CLASS = 'rounded-2xl border border-white/20 bg-white/80 p-6 sha
 const GLASS_PANEL_CLASS = 'rounded-xl border border-white/30 bg-white/60 p-4 backdrop-blur-sm transition-all duration-200'
 
 const SIGN_TYPE_FALLBACK_MAP = {
-
-  gesture: 'normal',
-
-  code: 'normal'
 
 }
 
@@ -185,11 +187,51 @@ const normalizeSignTypeForApi = (value) => {
 
 const shouldUseLocationParams = (value) => {
 
-  return value === 'location' || value === 'qrcode'
+  return value === 'location' || value === 'qrcode' || value === 'gesture'
 
 }
 
 
+
+const fileToBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      const base64 = result.includes(',') ? result.split(',')[1] : result
+      resolve(base64)
+    }
+    reader.onerror = () => reject(new Error('文件读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+const decodeQrCodeFromFile = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        const code = jsQR(imageData.data, imageData.width, imageData.height)
+        if (code && code.data) {
+          resolve(code.data)
+        } else {
+          reject(new Error('无法识别二维码，请确认图片包含有效的二维码。'))
+        }
+      }
+      img.onerror = () => reject(new Error('图片加载失败，请重新选择。'))
+      img.src = reader.result
+    }
+    reader.onerror = () => reject(new Error('文件读取失败，请重新选择。'))
+    reader.readAsDataURL(file)
+  })
+}
 
 const parseTaskTimestamp = (value) => {
 
@@ -371,6 +413,12 @@ export default function ChaoxingSignin() {
 
   const autoSignedTaskCacheRef = useRef(new Map())
 
+  const latestAddressRef = useRef('')
+
+  const geocodeRequestIdRef = useRef(0)
+
+  const placeSearchRequestIdRef = useRef(0)
+
 
 
   const [submitting, setSubmitting] = useState(false)
@@ -407,6 +455,20 @@ export default function ChaoxingSignin() {
 
   const [todayStats, setTodayStats] = useState({ total: 0, success: 0, failed: 0 })
 
+  const [geocodeLoading, setGeocodeLoading] = useState(false)
+
+  const [geocodeMessage, setGeocodeMessage] = useState('')
+
+  const [geocodeStatus, setGeocodeStatus] = useState('info')
+
+  const [placeSearchLoading, setPlaceSearchLoading] = useState(false)
+
+  const [placeSearchResults, setPlaceSearchResults] = useState([])
+
+  const [placeSearchMessage, setPlaceSearchMessage] = useState('')
+
+  const [isMapPickerOpen, setIsMapPickerOpen] = useState(false)
+
   const [form, setForm] = useState({
 
     username: '',
@@ -428,6 +490,10 @@ export default function ChaoxingSignin() {
     photoFile: null,
 
     qrCode: '',
+
+    qrCodeFile: null,
+
+    qrDecodeStatus: '',
 
     signCode: '',
 
@@ -876,19 +942,29 @@ export default function ChaoxingSignin() {
 
         }
 
-        const formData = new FormData()
+        const photoBase64 = await fileToBase64(form.photoFile)
 
-        appendPayloadToFormData(formData, payload)
+        payload.photo_base64 = photoBase64
 
-        formData.append('photo', form.photoFile)
-
-        resp = await requestChaoxingApi('/sign', formData)
+        resp = await requestChaoxingApi('/sign', payload)
 
       } else {
 
         if (signType === 'qrcode' && !payload.qr_code) {
 
-          throw new Error('二维码签到需要填写二维码内容。')
+          throw new Error('二维码签到需要提供二维码内容，请上传二维码图片或手动输入。')
+
+        }
+
+        if (signType === 'gesture' && !payload.gesture) {
+
+          throw new Error('手势签到需要输入手势编码。')
+
+        }
+
+        if (signType === 'code' && !payload.sign_code) {
+
+          throw new Error('签到码签到需要输入签到码。')
 
         }
 
@@ -937,6 +1013,207 @@ export default function ChaoxingSignin() {
     }
 
   }, [buildSigninPayload, fetchSigninHistory, form.password, form.photoFile, form.username, requestChaoxingApi])
+
+
+
+  const handleQrCodeFileUpload = useCallback(async (file) => {
+    if (!file) return
+    setForm((prev) => ({ ...prev, qrCodeFile: file, qrDecodeStatus: '解码中...' }))
+    try {
+      const decoded = await decodeQrCodeFromFile(file)
+      setForm((prev) => ({ ...prev, qrCode: decoded, qrDecodeStatus: `解码成功` }))
+    } catch (err) {
+      setForm((prev) => ({ ...prev, qrDecodeStatus: err.message }))
+    }
+  }, [])
+
+  const applyResolvedLocation = useCallback((location) => {
+
+    latestAddressRef.current = location.address || latestAddressRef.current
+
+    setForm((prev) => ({
+
+      ...prev,
+
+      address: location.address || prev.address,
+
+      latitude: location.latitude,
+
+      longitude: location.longitude,
+
+    }))
+
+  }, [])
+
+
+
+  const resolveLocationCoordinates = useCallback(async () => {
+
+    const liveAddressInput = document.getElementById('cx-address')
+
+    const liveAddress =
+
+      liveAddressInput instanceof HTMLInputElement ? liveAddressInput.value : latestAddressRef.current
+
+    const address = String(liveAddress || latestAddressRef.current).trim()
+
+    if (!address) {
+
+      setGeocodeStatus('error')
+
+      setGeocodeMessage('请先输入地址后再解析坐标。')
+
+      return
+
+    }
+
+
+
+    setGeocodeLoading(true)
+
+    latestAddressRef.current = address
+
+    setGeocodeStatus('info')
+
+    setGeocodeMessage('正在解析坐标...')
+
+    const requestId = geocodeRequestIdRef.current + 1
+
+    geocodeRequestIdRef.current = requestId
+
+
+
+    try {
+
+      const resolved = await resolveBaiduAddress(address)
+
+      if (geocodeRequestIdRef.current !== requestId) {
+        return
+      }
+
+      if (latestAddressRef.current.trim() !== address) {
+        setGeocodeStatus('info')
+
+        setGeocodeMessage('地址已变更，请重新解析坐标。')
+
+        return
+      }
+
+      applyResolvedLocation(resolved)
+
+      setGeocodeStatus('success')
+
+      setGeocodeMessage(`已解析：${resolved.latitude}, ${resolved.longitude}`)
+
+    } catch (err) {
+
+      if (geocodeRequestIdRef.current !== requestId) {
+        return
+      }
+
+      setGeocodeStatus('error')
+
+      setGeocodeMessage(err.message || '地点解析失败，请稍后重试')
+
+    } finally {
+
+      setGeocodeLoading(false)
+
+    }
+
+  }, [applyResolvedLocation])
+
+
+
+  const searchLocationCandidates = useCallback(async () => {
+
+    const liveAddressInput = document.getElementById('cx-address')
+
+    const liveAddress =
+
+      liveAddressInput instanceof HTMLInputElement ? liveAddressInput.value : latestAddressRef.current
+
+    const query = String(liveAddress || latestAddressRef.current).trim()
+
+    if (!query) {
+
+      setPlaceSearchResults([])
+
+      setPlaceSearchMessage('请先输入地名后再搜索地点。')
+
+      return
+
+    }
+
+
+
+    setPlaceSearchLoading(true)
+
+    latestAddressRef.current = query
+
+    setPlaceSearchResults([])
+
+    setPlaceSearchMessage('正在搜索地点...')
+
+    const requestId = placeSearchRequestIdRef.current + 1
+
+    placeSearchRequestIdRef.current = requestId
+
+
+
+    try {
+
+      const results = await searchBaiduPlaces(query)
+
+      if (placeSearchRequestIdRef.current !== requestId) {
+        return
+      }
+
+      if (latestAddressRef.current.trim() !== query) {
+        setPlaceSearchMessage('地名已变更，请重新搜索。')
+        return
+      }
+
+      setPlaceSearchResults(results)
+
+      setPlaceSearchMessage(`找到 ${results.length} 个地点，请选择最接近的一个。`)
+
+    } catch (err) {
+
+      if (placeSearchRequestIdRef.current !== requestId) {
+        return
+      }
+
+      setPlaceSearchResults([])
+
+      setPlaceSearchMessage(err.message || '地点搜索失败，请稍后重试')
+
+    } finally {
+
+      setPlaceSearchLoading(false)
+
+    }
+
+  }, [])
+
+
+
+  const choosePlaceSearchResult = useCallback((candidate) => {
+
+    applyResolvedLocation({
+      ...candidate,
+      address: [candidate.name, candidate.address].filter(Boolean).join(' '),
+    })
+
+    setPlaceSearchResults([])
+
+    setPlaceSearchMessage(`已选择地点：${candidate.name || candidate.address}`)
+
+    setGeocodeStatus('success')
+
+    setGeocodeMessage(`已选坐标：${candidate.latitude}, ${candidate.longitude}`)
+
+  }, [applyResolvedLocation])
 
 
 
@@ -1532,19 +1809,13 @@ export default function ChaoxingSignin() {
 
         }
 
-        const formData = new FormData()
+        const photoBase64 = await fileToBase64(form.photoFile)
 
-        appendPayloadToFormData(formData, payload)
-
-        formData.append('photo', form.photoFile)
-
-        resp = await requestChaoxingApi('/start', formData)
-
-      } else {
-
-        resp = await requestChaoxingApi('/start', payload)
+        payload.photo_base64 = photoBase64
 
       }
+
+      resp = await requestChaoxingApi('/start', payload)
 
 
 
@@ -2044,35 +2315,71 @@ export default function ChaoxingSignin() {
 
                     <label htmlFor="cx-photo" className="mb-2 block text-sm font-medium text-text">
 
-                      签到图片
+                      签到照片（自拍/拍照）
 
                     </label>
 
-                    <input
+                    <div className="flex items-center gap-3">
 
-                      id="cx-photo"
+                      <label
 
-                      type="file"
+                        htmlFor="cx-photo"
 
-                      accept="image/*"
+                        className="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-white/30 bg-white/60 px-4 py-2 text-sm text-text backdrop-blur-sm transition-all duration-200 hover:border-primary/50 hover:bg-white/80"
 
-                      onChange={(event) => setForm((prev) => ({ ...prev, photoFile: event.target.files?.[0] || null }))}
+                      >
 
-                      className="w-full min-h-[44px] rounded-xl border border-white/30 bg-white/60 px-4 py-2 text-text backdrop-blur-sm transition-all duration-200 hover:border-primary/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                        <Camera className="h-4 w-4" />
 
-                    />
+                        选择照片
 
-                    <p className="mt-2 text-xs text-text/70">
+                      </label>
 
-                      {form.photoFile ? `已选择：${form.photoFile.name}` : '请上传签到图片。'}
+                      <input
 
-                    </p>
+                        id="cx-photo"
+
+                        type="file"
+
+                        accept="image/*"
+
+                        className="hidden"
+
+                        onChange={(event) => setForm((prev) => ({ ...prev, photoFile: event.target.files?.[0] || null }))}
+
+                      />
+
+                      <p className="text-xs text-text/70">
+
+                        {form.photoFile ? `已选择：${form.photoFile.name}（${(form.photoFile.size / 1024).toFixed(0)} KB）` : '请上传自拍照片，支持 JPG/PNG 格式。'}
+
+                      </p>
+
+                    </div>
+
+                    {form.photoFile && (
+
+                      <div className="mt-3">
+
+                        <img
+
+                          src={URL.createObjectURL(form.photoFile)}
+
+                          alt="预览"
+
+                          className="h-32 w-32 rounded-xl border border-white/30 object-cover"
+
+                        />
+
+                      </div>
+
+                    )}
 
                   </div>
 
                 )}
 
-                {(form.signType === 'location' || form.signType === 'qrcode') && (
+                {(form.signType === 'location' || form.signType === 'qrcode' || form.signType === 'gesture') && (
 
                   <>
 
@@ -2120,11 +2427,131 @@ export default function ChaoxingSignin() {
 
                         value={form.address}
 
-                        onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))}
+                        onChange={(e) => {
+                          latestAddressRef.current = e.target.value
+                          setForm((prev) => ({ ...prev, address: e.target.value }))
+                        }}
 
                         placeholder="e.g. Chaoyang District, Beijing"
 
                       />
+
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+
+                        <Button
+
+                          type="button"
+
+                          variant="secondary"
+
+                          className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
+
+                          onClick={resolveLocationCoordinates}
+
+
+                          disabled={geocodeLoading}
+
+                        >
+
+                          {geocodeLoading ? '解析中...' : '解析坐标'}
+
+                        </Button>
+
+                        <Button
+
+                          type="button"
+
+                          variant="secondary"
+
+                          className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
+
+                          onClick={searchLocationCandidates}
+
+                          disabled={placeSearchLoading}
+
+                        >
+
+                          {placeSearchLoading ? '搜索中...' : '搜索地点'}
+
+                        </Button>
+
+                        <Button
+
+                          type="button"
+
+                          variant="secondary"
+
+                          className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105"
+
+                          onClick={() => setIsMapPickerOpen(true)}
+
+                        >
+
+                          地图选点
+
+                        </Button>
+
+                        <p
+
+                          className={`text-xs ${
+
+                            geocodeStatus === 'error'
+
+                              ? 'text-red-600'
+
+                              : geocodeStatus === 'success'
+
+                                ? 'text-green-600'
+
+                                : 'text-text/70'
+
+                          }`}
+
+                        >
+
+                          {geocodeMessage || '可根据地点名称自动补全经纬度。'}
+
+                        </p>
+
+                      </div>
+
+                      {placeSearchMessage ? (
+
+                        <p className="mt-3 text-xs text-text/70">{placeSearchMessage}</p>
+
+                      ) : null}
+
+                      {placeSearchResults.length > 0 ? (
+
+                        <div className="mt-3 space-y-2 rounded-xl border border-white/30 bg-white/50 p-3 backdrop-blur-sm">
+
+                          {placeSearchResults.map((candidate) => (
+
+                            <button
+
+                              key={candidate.id}
+
+                              type="button"
+
+                              data-place-result-id={candidate.id}
+
+                              className="w-full rounded-xl border border-transparent bg-white/70 px-4 py-3 text-left transition-all duration-200 hover:border-primary/40 hover:bg-white"
+
+                              onClick={() => choosePlaceSearchResult(candidate)}
+
+                            >
+
+                              <span className="block text-sm font-medium text-text">{candidate.name || candidate.address}</span>
+
+                              <span className="mt-1 block text-xs text-text/70">{candidate.address}</span>
+
+                            </button>
+
+                          ))}
+
+                        </div>
+
+                      ) : null}
 
                     </div>
 
@@ -2152,13 +2579,67 @@ export default function ChaoxingSignin() {
 
                 {form.signType === 'qrcode' && (
 
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-2 space-y-4">
+
+                    <div>
+
+                      <label htmlFor="cx-qrcode-file" className="mb-2 block text-sm font-medium text-text">
+
+                        上传二维码图片
+
+                      </label>
+
+                      <div className="flex items-center gap-3">
+
+                        <label
+
+                          htmlFor="cx-qrcode-file"
+
+                          className="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-white/30 bg-white/60 px-4 py-2 text-sm text-text backdrop-blur-sm transition-all duration-200 hover:border-primary/50 hover:bg-white/80"
+
+                        >
+
+                          <Upload className="h-4 w-4" />
+
+                          选择二维码图片
+
+                        </label>
+
+                        <input
+
+                          id="cx-qrcode-file"
+
+                          type="file"
+
+                          accept="image/*"
+
+                          className="hidden"
+
+                          onChange={(e) => {
+
+                            const file = e.target.files?.[0]
+
+                            if (file) handleQrCodeFileUpload(file)
+
+                          }}
+
+                        />
+
+                        <p className={`text-xs ${form.qrDecodeStatus.includes('成功') ? 'text-green-600' : form.qrDecodeStatus.includes('失败') || form.qrDecodeStatus.includes('无法') ? 'text-red-600' : 'text-text/70'}`}>
+
+                          {form.qrDecodeStatus || (form.qrCodeFile ? `已选择：${form.qrCodeFile.name}` : '支持 JPG/PNG 格式的二维码截图')}
+
+                        </p>
+
+                      </div>
+
+                    </div>
 
                     <Input
 
                       id="cx-qrcode"
 
-                      label="二维码内容"
+                      label="二维码内容（上传图片后自动填充，也可手动输入）"
 
                       type="text"
 
@@ -2166,11 +2647,11 @@ export default function ChaoxingSignin() {
 
                       onChange={(e) => setForm((prev) => ({ ...prev, qrCode: e.target.value }))}
 
-                      placeholder="请输入二维码内容或扫码文本"
+                      placeholder="上传二维码图片后自动解析，或手动粘贴二维码链接"
 
                     />
 
-                    <p className="mt-2 text-xs text-text/70">
+                    <p className="text-xs text-text/70">
 
                       二维码签到可附带经纬度、地址和海拔参数以提高成功率。
 
@@ -2188,7 +2669,7 @@ export default function ChaoxingSignin() {
 
                       id="cx-gesture"
 
-                      label="手势标识（可选）"
+                      label="手势编码"
 
                       type="text"
 
@@ -2196,9 +2677,15 @@ export default function ChaoxingSignin() {
 
                       onChange={(e) => setForm((prev) => ({ ...prev, gesturePattern: e.target.value }))}
 
-                      placeholder="例如：上右下左（后端兼容按普通签到处理）"
+                      placeholder="请输入老师发布的手势编码"
 
                     />
+
+                    <p className="mt-2 text-xs text-text/70">
+
+                      手势签到可附带位置参数，填写下方地址信息以提高成功率。
+
+                    </p>
 
                   </div>
 
@@ -2220,7 +2707,7 @@ export default function ChaoxingSignin() {
 
                       onChange={(e) => setForm((prev) => ({ ...prev, signCode: e.target.value }))}
 
-                      placeholder="请输入老师发布的签到码（后端兼容按普通签到处理）"
+                      placeholder="请输入老师发布的签到码"
 
                     />
 
@@ -3021,6 +3508,22 @@ export default function ChaoxingSignin() {
 
 
       </main>
+
+      <BaiduMapPickerModal
+        open={isMapPickerOpen}
+        initialLocation={{
+          latitude: form.latitude,
+          longitude: form.longitude,
+          address: form.address,
+        }}
+        onClose={() => setIsMapPickerOpen(false)}
+        onConfirm={(location) => {
+          applyResolvedLocation(location)
+          setGeocodeStatus('success')
+          setGeocodeMessage(`已选点：${location.latitude}, ${location.longitude}`)
+          setIsMapPickerOpen(false)
+        }}
+      />
 
     </div>
 

@@ -811,12 +811,14 @@ class ChaoxingSigninClient:
         object_id = (
             options.get("object_id")
             or options.get("objectId")
-            or self._upload_photo_and_get_object_id(
-                str(options.get("photo_base64") or options.get("photo") or "")
-            )
         )
         if not object_id:
-            return "fail-need-objectid"
+            photo_data = str(options.get("photo_base64") or options.get("photo") or "")
+            if not photo_data:
+                return "拍照签到失败：未收到图片数据，请重新上传照片。"
+            object_id = self._upload_photo_and_get_object_id(photo_data)
+        if not object_id:
+            return "拍照签到失败：图片上传到学习通服务器失败，请检查网络或重试。"
 
         params = {
             "activeId": task["activeId"],
@@ -835,26 +837,44 @@ class ChaoxingSigninClient:
     def _upload_photo_and_get_object_id(self, photo_input: str) -> str:
         payload = (photo_input or "").strip()
         if not payload:
+            logger.warning("photo upload: empty photo_input")
             return ""
         raw = payload.split(",", 1)[1] if payload.startswith("data:image") and "," in payload else payload
         try:
             image_bytes = base64.b64decode(raw, validate=False)
-        except Exception:
+        except Exception as exc:
+            logger.warning("photo upload: base64 decode failed: %s", exc)
             return ""
 
-        token_resp = self.session.get(PAN_TOKEN_URL, timeout=12)
+        if len(image_bytes) < 100:
+            logger.warning("photo upload: decoded image too small (%d bytes)", len(image_bytes))
+            return ""
+
+        logger.info("photo upload: decoded %d bytes, requesting pan token", len(image_bytes))
+
+        try:
+            token_resp = self.session.get(PAN_TOKEN_URL, timeout=12)
+        except requests.RequestException as exc:
+            logger.warning("photo upload: pan token request failed: %s", exc)
+            return ""
         token_data = self._safe_json(token_resp)
         token = token_data.get("_token") or token_data.get("token")
         if not token:
+            logger.warning("photo upload: no token in response (status=%s body=%s)", token_resp.status_code, token_resp.text[:200] if token_resp.text else "")
             return ""
 
-        upload_resp = self.session.post(
-            PAN_UPLOAD_URL,
-            params={"_from": "mobilelearn", "_token": token},
-            files={"file": ("signin.jpg", image_bytes, "image/jpeg")},
-            data={"puid": self.uid},
-            timeout=25,
-        )
+        logger.info("photo upload: got pan token, uploading image")
+        try:
+            upload_resp = self.session.post(
+                PAN_UPLOAD_URL,
+                params={"_from": "mobilelearn", "_token": token},
+                files={"file": ("signin.jpg", image_bytes, "image/jpeg")},
+                data={"puid": self.uid},
+                timeout=25,
+            )
+        except requests.RequestException as exc:
+            logger.warning("photo upload: upload request failed: %s", exc)
+            return ""
 
         object_id = ""
         data = self._safe_json(upload_resp)
@@ -865,6 +885,11 @@ class ChaoxingSigninClient:
             match = re.search(r'"objectId"\s*:\s*"([^"]+)"', text)
             if match:
                 object_id = match.group(1)
+
+        if object_id:
+            logger.info("photo upload: success, objectId=%s", object_id)
+        else:
+            logger.warning("photo upload: failed to extract objectId (status=%s body=%s)", upload_resp.status_code, (upload_resp.text or "")[:300])
         return object_id
 
     def _extract_object_id(self, value: Any) -> str:

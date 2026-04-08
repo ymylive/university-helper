@@ -158,6 +158,62 @@ async def test_zhihuishu_required_endpoints():
 
 
 @pytest.mark.asyncio
+async def test_zhihuishu_progress_does_not_overwrite_other_same_course_tasks():
+    user_id = "1"
+    adapter = FakeZhihuishuAdapter()
+    adapter._progress.update(
+        {
+            "status": "completed",
+            "message": "Task completed",
+            "total": 2,
+            "completed": 2,
+            "failed": 0,
+            "percentage": 100.0,
+        }
+    )
+    course_api._user_adapters[user_id] = adapter
+
+    course_api._set_course_task(
+        "old-task",
+        {
+            "task_id": "old-task",
+            "platform": "zhihuishu",
+            "task_type": "course",
+            "course_id": "1001",
+            "user_id": user_id,
+            "status": "running",
+            "message": "Old task still running",
+            "progress": {"status": "running", "completed": 1, "total": 3},
+            "current_task": "Video 2",
+            "created_at": 1,
+            "updated_at": 1,
+        },
+    )
+    course_api._set_course_task(
+        "active-task",
+        {
+            "task_id": "active-task",
+            "platform": "zhihuishu",
+            "task_type": "course",
+            "course_id": "1001",
+            "user_id": user_id,
+            "status": "running",
+            "message": "Active task running",
+            "progress": {"status": "running", "completed": 1, "total": 2},
+            "current_task": "Video 1",
+            "created_at": 2,
+            "updated_at": 2,
+        },
+    )
+
+    progress_resp = await course_api.zhihuishu_get_progress("1001", current_user={"user_id": 1})
+
+    assert progress_resp["status"] == "completed"
+    assert course_api._course_tasks["old-task"]["status"] == "running"
+    assert course_api._course_tasks["active-task"]["status"] == "running"
+
+
+@pytest.mark.asyncio
 async def test_chaoxing_start_accepts_multipart_photo():
     captured = {}
 

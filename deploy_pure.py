@@ -27,7 +27,7 @@ SERVER_USER = os.getenv("EASY_LEARNING_SERVER_USER", "root").strip() or "root"
 SERVER_PASSWORD = os.getenv("EASY_LEARNING_SERVER_PASSWORD", "").strip()
 PROJECT_NAME = os.getenv("EASY_LEARNING_PROJECT_NAME", "easy_learning").strip() or "easy_learning"
 REMOTE_DIR = os.getenv("EASY_LEARNING_REMOTE_DIR", f"/opt/{PROJECT_NAME}").strip() or f"/opt/{PROJECT_NAME}"
-COMPOSE_FILE = os.getenv("EASY_LEARNING_COMPOSE_FILE", "docker-compose.server.yml").strip() or "docker-compose.server.yml"
+COMPOSE_FILE = os.getenv("EASY_LEARNING_COMPOSE_FILE", "docker-compose.yml").strip() or "docker-compose.yml"
 POSTGRES_PASSWORD = os.getenv("EASY_LEARNING_POSTGRES_PASSWORD", "change-this-db-password").strip()
 SECRET_KEY = os.getenv("EASY_LEARNING_SECRET_KEY", "").strip() or secrets.token_hex(32)
 SHUAKE_COMPAT_SECRET = os.getenv("EASY_LEARNING_SHUAKE_COMPAT_SECRET", "").strip()
@@ -91,6 +91,10 @@ def run_remote(ssh: paramiko.SSHClient, command: str) -> None:
         raise SystemExit(exit_status)
 
 
+def compose_command() -> str:
+    return "$(command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo 'docker compose')"
+
+
 def write_remote_env(sftp: paramiko.SFTPClient, remote_root: str) -> None:
     env_content = "\n".join(
         [
@@ -128,9 +132,10 @@ def main() -> None:
         finally:
             sftp.close()
 
-        run_remote(ssh, f"cd {REMOTE_DIR} && docker compose -f {COMPOSE_FILE} down || true")
-        run_remote(ssh, f"cd {REMOTE_DIR} && docker compose -f {COMPOSE_FILE} up -d --build")
-        run_remote(ssh, f"cd {REMOTE_DIR} && docker compose -f {COMPOSE_FILE} ps")
+        compose_cmd = compose_command()
+        run_remote(ssh, f"cd {REMOTE_DIR} && {compose_cmd} -f {COMPOSE_FILE} down || true")
+        run_remote(ssh, f"cd {REMOTE_DIR} && {compose_cmd} -f {COMPOSE_FILE} up -d --build")
+        run_remote(ssh, f"cd {REMOTE_DIR} && {compose_cmd} -f {COMPOSE_FILE} ps")
     finally:
         ssh.close()
 

@@ -2,181 +2,119 @@
 
 ## 概述
 
-统一签到平台 Docker 容器化部署指南。
+当前仓库的正式部署入口是根目录 `docker-compose.yml`。
 
-## 系统架构
+它会启动 3 个容器：
 
-- **app**: FastAPI 后端 + React 前端
-- **postgres**: PostgreSQL 15 数据库（多租户架构）
-- **redis**: Redis 7 缓存与会话存储
-- **nginx**: Nginx 反向代理
+- `easy-learning-app`: FastAPI 后端
+- `easy-learning-nginx`: 提供前端静态资源并反向代理后端
+- `easy-learning-db`: PostgreSQL 15
+
+`docker-compose.server.yml` 只保留为精简后端场景，不作为完整站点的默认部署入口。
 
 ## 前置要求
 
 - Docker Engine 20.10+
-- Docker Compose 2.0+
+- `docker compose` 或 `docker-compose`
 - 至少 2GB 可用内存
 - 至少 5GB 可用磁盘空间
 
-## 快速开始
-
-### 1. 环境配置
+## 环境配置
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，修改关键配置：
+编辑 `.env`：
 
 ```env
 POSTGRES_PASSWORD=your_secure_password
-JWT_SECRET=your_jwt_secret_key_min_32_chars
+SECRET_KEY=your_secret_key_min_32_chars
+SHUAKE_COMPAT_SECRET=
+CORS_ORIGINS=["https://your-domain.com","http://your-domain.com"]
+APP_PORT=8000
+NGINX_PORT=80
 ```
 
-### 2. 启动服务
+说明：
+
+- `APP_PORT` 是宿主机到后端容器的本地绑定端口，默认 `127.0.0.1:8000`
+- `NGINX_PORT` 是容器前端入口暴露端口
+- 如果宿主机已有 Nginx/Cloudflare，通常让宿主机反代到 `NGINX_PORT`
+
+## 启动与更新
 
 ```bash
-docker-compose up -d
+docker-compose -f docker-compose.yml up -d --build
 ```
 
-### 3. 访问应用
-
-- 应用地址: http://localhost
-- API 文档: http://localhost/api/docs
-
-### 4. 停止服务
+如果机器只有 Compose v1：
 
 ```bash
-docker-compose down
+docker-compose -f docker-compose.yml up -d --build
 ```
 
-## 服务详情
+如果机器是 Docker Compose Plugin：
 
-### 应用容器 (app)
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
 
-- **镜像**: 多阶段构建（Python 3.11 + Node 18）
-- **端口**: 8000（内部）
-- **健康检查**: HTTP GET /health（30秒间隔）
+## 访问方式
 
-### 数据库容器 (postgres)
+- 容器内前端入口：`http://<server>:<NGINX_PORT>`
+- 后端健康检查：`http://127.0.0.1:<APP_PORT>/health`
+- 若宿主机已有 Nginx，建议用域名反代到 `127.0.0.1:<NGINX_PORT>`
 
-- **镜像**: postgres:15-alpine
-- **端口**: 5432（内部）
-- **数据卷**: postgres-data
-- **初始化**: 自动执行 database/ 目录下的 SQL 脚本
+## 日志与状态
 
-### 缓存容器 (redis)
-
-- **镜像**: redis:7-alpine
-- **端口**: 6379（内部）
-- **数据卷**: redis-data
-- **持久化**: AOF 模式
-
-### 反向代理 (nginx)
-
-- **镜像**: nginx:alpine
-- **端口**: 80（外部）
-- **功能**: API 代理、WebSocket 支持、静态文件服务
+```bash
+docker-compose -f docker-compose.yml ps
+docker-compose -f docker-compose.yml logs -f app
+docker-compose -f docker-compose.yml logs -f nginx
+docker-compose -f docker-compose.yml logs -f postgres
+```
 
 ## 数据库管理
 
-### 备份数据库
-
 ```bash
-docker-compose exec postgres pg_dump -U signin unified_signin > backup.sql
+docker-compose -f docker-compose.yml exec postgres psql -U easylearning -d main_db
+docker-compose -f docker-compose.yml exec postgres pg_dump -U easylearning main_db > backup.sql
 ```
 
-### 恢复数据库
+## 重要迁移说明
 
-```bash
-docker-compose exec -T postgres psql -U signin unified_signin < backup.sql
-```
+不要在未校验数据前删除旧数据库容器或旧数据卷。
 
-### 创建新租户
+已验证过一种真实场景：
 
-```bash
-docker-compose exec postgres psql -U signin unified_signin -f /docker-entrypoint-initdb.d/create_tenant.sql
-```
+- 新库只有 `course_task_history`、`course_task_store`
+- 旧库额外包含 `users`
 
-## 日志查看
+这意味着“新版本可运行”不等于“旧数据已迁移”。正确流程是：
 
-```bash
-# 所有服务日志
-docker-compose logs -f
-
-# 特定服务日志
-docker-compose logs -f app
-docker-compose logs -f postgres
-```
-
-## 生产环境建议
-
-### 安全加固
-
-1. 修改默认密码（POSTGRES_PASSWORD、JWT_SECRET）
-2. 限制端口暴露（仅暴露 Nginx 端口）
-3. 启用 HTTPS（配置 SSL 证书）
-4. 定期备份数据库
-
-### 性能优化
-
-在 `docker-compose.yml` 中添加资源限制：
-
-```yaml
-services:
-  app:
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-```
-
-### 日志轮转
-
-```yaml
-services:
-  app:
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-```
+1. 先启动新栈
+2. 对比新旧数据库表结构和关键行数
+3. 完成数据迁移
+4. 再删除旧数据库容器和旧卷
 
 ## 故障排查
 
-### 服务无法启动
+### 健康检查 400 / Invalid host header
 
-```bash
-docker-compose logs app
-docker-compose ps
-docker-compose build --no-cache
-```
-
-### 数据库连接失败
-
-```bash
-docker-compose exec postgres pg_isready -U signin
-docker-compose logs postgres
-```
+如果容器健康检查访问 `/health` 返回 `400`，检查 `TrustedHostMiddleware` 是否只接受了原始 `CORS_ORIGINS` 字符串，未提取 host。
 
 ### 端口冲突
 
-修改 `.env` 中的端口配置。
+如果宿主机已有旧应用占用 `8000` 或已有宿主机 Nginx 占用 `80/443`，在 `.env` 中改用：
 
-## 更新应用
-
-```bash
-git pull
-docker-compose up -d --build
+```env
+APP_PORT=8002
+NGINX_PORT=18082
 ```
 
-## 技术栈
+然后由宿主机现有 Nginx 反代到新端口。
 
-- **前端**: React + Vite
-- **后端**: FastAPI + Python 3.11
-- **数据库**: PostgreSQL 15（多租户架构）
-- **缓存**: Redis 7
-- **反向代理**: Nginx
-- **容器编排**: Docker Compose
+### Debian 源网络抖动
+
+如果镜像构建阶段 `apt-get install` 无法连接 `deb.debian.org`，优先减少运行时 `apt-get` 依赖，避免把部署稳定性绑定到外部系统包源。

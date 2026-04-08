@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Upload the current project and deploy it with docker-compose.server.yml.
+Upload the current project and deploy it with docker-compose.yml.
 
 Required environment variables:
   EASY_LEARNING_SERVER_IP
@@ -10,7 +10,7 @@ Optional environment variables:
   EASY_LEARNING_SERVER_USER=root
   EASY_LEARNING_PROJECT_NAME=easy_learning
   EASY_LEARNING_REMOTE_DIR=/opt/easy_learning
-  EASY_LEARNING_COMPOSE_FILE=docker-compose.server.yml
+  EASY_LEARNING_COMPOSE_FILE=docker-compose.yml
   EASY_LEARNING_POSTGRES_PASSWORD=change-this-db-password
   EASY_LEARNING_SECRET_KEY=<generated automatically>
   EASY_LEARNING_SHUAKE_COMPAT_SECRET=
@@ -34,7 +34,7 @@ SERVER_USER = os.getenv("EASY_LEARNING_SERVER_USER", "root").strip() or "root"
 SERVER_PASSWORD = os.getenv("EASY_LEARNING_SERVER_PASSWORD", "").strip()
 PROJECT_NAME = os.getenv("EASY_LEARNING_PROJECT_NAME", "easy_learning").strip() or "easy_learning"
 REMOTE_DIR = os.getenv("EASY_LEARNING_REMOTE_DIR", f"/opt/{PROJECT_NAME}").strip() or f"/opt/{PROJECT_NAME}"
-COMPOSE_FILE = os.getenv("EASY_LEARNING_COMPOSE_FILE", "docker-compose.server.yml").strip() or "docker-compose.server.yml"
+COMPOSE_FILE = os.getenv("EASY_LEARNING_COMPOSE_FILE", "docker-compose.yml").strip() or "docker-compose.yml"
 POSTGRES_PASSWORD = os.getenv("EASY_LEARNING_POSTGRES_PASSWORD", "change-this-db-password").strip()
 SECRET_KEY = os.getenv("EASY_LEARNING_SECRET_KEY", "").strip() or secrets.token_hex(32)
 SHUAKE_COMPAT_SECRET = os.getenv("EASY_LEARNING_SHUAKE_COMPAT_SECRET", "").strip()
@@ -108,9 +108,10 @@ def main() -> None:
 
         remote_cmd = (
             f"cd {remote_dir} && "
-            f"docker compose -f {shlex.quote(COMPOSE_FILE)} down || true && "
-            f"docker compose -f {shlex.quote(COMPOSE_FILE)} up -d --build && "
-            f"docker compose -f {shlex.quote(COMPOSE_FILE)} ps"
+            "compose_cmd=$(command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo 'docker compose') && "
+            f"$compose_cmd -f {shlex.quote(COMPOSE_FILE)} down || true && "
+            f"$compose_cmd -f {shlex.quote(COMPOSE_FILE)} up -d --build && "
+            f"$compose_cmd -f {shlex.quote(COMPOSE_FILE)} ps"
         )
         run(f"{sshpass} ssh -o StrictHostKeyChecking=no {remote} {shlex.quote(remote_cmd)}")
     finally:

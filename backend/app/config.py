@@ -7,7 +7,7 @@ PUBLIC_ROUTES = [
     "/docs",
     "/openapi.json",
     "/",
-    "/health"
+    "/health",
 ]
 
 
@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # Security
     ENFORCE_HTTPS: bool = True
+
+    BAIDU_MAP_API_KEY: Optional[str] = None
 
     class Config:
         env_file = ".env"

@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import RedirectResponse
+from urllib.parse import urlparse
 from app.config import settings
 from app.middleware.tenant_isolation import tenant_isolation_middleware
 from app.api.v1 import auth, chaoxing
@@ -12,6 +13,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+def _build_allowed_hosts(origins: list[str]) -> list[str]:
+    hosts = {"localhost", "127.0.0.1"}
+    for origin in origins:
+        value = str(origin or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value if "://" in value else f"http://{value}")
+        host = parsed.hostname
+        if host:
+            hosts.add(host)
+    return sorted(hosts)
+
 # HTTPS enforcement middleware
 @app.middleware("http")
 async def https_redirect_middleware(request: Request, call_next):
@@ -21,7 +35,7 @@ async def https_redirect_middleware(request: Request, call_next):
     return await call_next(request)
 
 # CSRF protection
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.CORS_ORIGINS)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_build_allowed_hosts(settings.CORS_ORIGINS))
 
 # CORS
 app.add_middleware(
