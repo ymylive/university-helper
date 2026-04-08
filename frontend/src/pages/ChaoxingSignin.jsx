@@ -10,7 +10,7 @@ import { getToken, isAuthenticated, removeToken } from '../utils/auth'
 
 import { Button, Input } from '../components'
 
-import { resolveBaiduAddress, searchBaiduPlaces } from '../services/baiduLocation'
+import { normalizeBaiduLocationResult, normalizeBaiduPlaceCandidates } from '../services/baiduLocation'
 
 import BaiduMapPickerModal from '../components/BaiduMapPickerModal'
 
@@ -1085,9 +1085,7 @@ export default function ChaoxingSignin() {
 
     try {
 
-      const token = ensureAccessToken()
-
-      const resolved = await resolveBaiduAddress(address, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      const resp = await requestChaoxingApi(`/location/geocode?query=${encodeURIComponent(address)}`, null, { method: 'GET' })
 
       if (geocodeRequestIdRef.current !== requestId) {
         return
@@ -1100,6 +1098,8 @@ export default function ChaoxingSignin() {
 
         return
       }
+
+      const resolved = normalizeBaiduLocationResult(resp)
 
       applyResolvedLocation(resolved)
 
@@ -1123,7 +1123,7 @@ export default function ChaoxingSignin() {
 
     }
 
-  }, [applyResolvedLocation, ensureAccessToken])
+  }, [applyResolvedLocation, requestChaoxingApi])
 
 
 
@@ -1165,9 +1165,7 @@ export default function ChaoxingSignin() {
 
     try {
 
-      const token = ensureAccessToken()
-
-      const results = await searchBaiduPlaces(query, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      const resp = await requestChaoxingApi(`/location/search?query=${encodeURIComponent(query)}`, null, { method: 'GET' })
 
       if (placeSearchRequestIdRef.current !== requestId) {
         return
@@ -1178,9 +1176,11 @@ export default function ChaoxingSignin() {
         return
       }
 
+      const results = normalizeBaiduPlaceCandidates(resp)
+
       setPlaceSearchResults(results)
 
-      setPlaceSearchMessage(`找到 ${results.length} 个地点，请选择最接近的一个。`)
+      setPlaceSearchMessage(results.length > 0 ? `找到 ${results.length} 个地点，请选择最接近的一个。` : '未找到可选地点')
 
     } catch (err) {
 
@@ -1198,7 +1198,7 @@ export default function ChaoxingSignin() {
 
     }
 
-  }, [ensureAccessToken])
+  }, [requestChaoxingApi])
 
 
 
