@@ -86,8 +86,8 @@ export const normalizeBaiduPlaceCandidates = (payload) => {
     .filter(Boolean)
 }
 
-export const resolveBaiduAddress = async (query) => {
-  const response = await fetch(buildBaiduGeocoderUrl(query))
+export const resolveBaiduAddress = async (query, { headers } = {}) => {
+  const response = await fetch(buildBaiduGeocoderUrl(query), { headers })
   const payload = await parseResponsePayload(response)
 
   if (!response.ok) {
@@ -97,8 +97,8 @@ export const resolveBaiduAddress = async (query) => {
   return normalizeBaiduLocationResult(payload)
 }
 
-export const searchBaiduPlaces = async (query) => {
-  const response = await fetch(buildBaiduPlaceSearchUrl(query))
+export const searchBaiduPlaces = async (query, { headers } = {}) => {
+  const response = await fetch(buildBaiduPlaceSearchUrl(query), { headers })
   const payload = await parseResponsePayload(response)
 
   if (!response.ok) {

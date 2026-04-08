@@ -1085,7 +1085,9 @@ export default function ChaoxingSignin() {
 
     try {
 
-      const resolved = await resolveBaiduAddress(address)
+      const token = ensureAccessToken()
+
+      const resolved = await resolveBaiduAddress(address, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
 
       if (geocodeRequestIdRef.current !== requestId) {
         return
@@ -1121,7 +1123,7 @@ export default function ChaoxingSignin() {
 
     }
 
-  }, [applyResolvedLocation])
+  }, [applyResolvedLocation, ensureAccessToken])
 
 
 
@@ -1163,7 +1165,9 @@ export default function ChaoxingSignin() {
 
     try {
 
-      const results = await searchBaiduPlaces(query)
+      const token = ensureAccessToken()
+
+      const results = await searchBaiduPlaces(query, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
 
       if (placeSearchRequestIdRef.current !== requestId) {
         return
@@ -1194,7 +1198,7 @@ export default function ChaoxingSignin() {
 
     }
 
-  }, [])
+  }, [ensureAccessToken])
 
 
 
