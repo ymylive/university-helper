@@ -13,8 +13,8 @@ from app.dependencies import get_current_user
 from app.services.course.chaoxing.signin import signin_manager
 
 router = APIRouter()
-NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
-NOMINATIM_HEADERS = {"User-Agent": "UniversityHelper/1.0"}
+PHOTON_BASE_URL = "https://photon.komoot.io"
+PHOTON_HEADERS = {"User-Agent": "UniversityHelper/1.0"}
 SUPPORTED_SIGN_TYPES = {
     "all",
     "normal",
@@ -86,11 +86,10 @@ class ChaoxingStartRequest(BaseModel):
     altitude: Optional[float] = None
 
 
-def _request_nominatim_json(path: str, params: Dict[str, Any]) -> Any:
-    url = f"{NOMINATIM_BASE_URL}{path}"
-    params["format"] = "json"
+def _request_photon_json(path: str, params: Dict[str, Any]) -> Any:
+    url = f"{PHOTON_BASE_URL}{path}"
     try:
-        response = requests.get(url, params=params, headers=NOMINATIM_HEADERS, timeout=12)
+        response = requests.get(url, params=params, headers=PHOTON_HEADERS, timeout=12)
         response.raise_for_status()
     except requests.RequestException as exc:
         raise HTTPException(
@@ -103,6 +102,15 @@ def _request_nominatim_json(path: str, params: Dict[str, Any]) -> Any:
         raise HTTPException(
             status_code=502, detail="Invalid geocoding service response"
         ) from exc
+
+
+def _photon_feature_to_address(props: Dict[str, Any]) -> str:
+    parts = []
+    for key in ("country", "state", "city", "district", "street", "name"):
+        val = (props.get(key) or "").strip()
+        if val and val not in parts:
+            parts.append(val)
+    return " ".join(parts) if parts else ""
 
 
 def _parse_form_value(value: str) -> Any:
@@ -257,22 +265,28 @@ async def chaoxing_location_geocode(
     if not keyword:
         raise HTTPException(status_code=422, detail="query is required")
 
-    results = await _run_blocking(
-        _request_nominatim_json,
-        "/search",
-        {"q": keyword, "limit": 1, "accept-language": "zh-CN"},
+    data = await _run_blocking(
+        _request_photon_json,
+        "/api/",
+        {"q": keyword, "limit": 1, "lang": "default"},
     )
-    if not isinstance(results, list) or len(results) == 0:
+    features = data.get("features") or []
+    if not features:
         raise HTTPException(status_code=404, detail="未找到可用坐标")
 
-    hit = results[0]
+    hit = features[0]
+    coords = hit.get("geometry", {}).get("coordinates", [])
+    props = hit.get("properties", {})
+    if len(coords) < 2:
+        raise HTTPException(status_code=404, detail="未找到可用坐标")
+
     return {
         "status": True,
         "message": "ok",
         "data": {
             "result": {
-                "formatted_address": str(hit.get("display_name") or "").strip(),
-                "location": {"lat": float(hit["lat"]), "lng": float(hit["lon"])},
+                "formatted_address": _photon_feature_to_address(props),
+                "location": {"lat": coords[1], "lng": coords[0]},
             }
         },
     }
@@ -290,25 +304,28 @@ async def chaoxing_location_search(
     if not keyword:
         raise HTTPException(status_code=422, detail="query is required")
 
-    results = await _run_blocking(
-        _request_nominatim_json,
-        "/search",
-        {"q": keyword, "limit": 10, "addressdetails": 1, "accept-language": "zh-CN"},
+    data = await _run_blocking(
+        _request_photon_json,
+        "/api/",
+        {"q": keyword, "limit": 10, "lang": "default"},
     )
-    if not isinstance(results, list):
-        results = []
+    features = data.get("features") or []
 
     normalized = []
-    for index, item in enumerate(results):
+    for index, item in enumerate(features):
+        coords = item.get("geometry", {}).get("coordinates", [])
+        if len(coords) < 2:
+            continue
+        props = item.get("properties", {})
         try:
-            lat = float(item["lat"])
-            lon = float(item["lon"])
-        except (KeyError, TypeError, ValueError):
+            lat = float(coords[1])
+            lon = float(coords[0])
+        except (TypeError, ValueError):
             continue
         normalized.append({
-            "id": str(item.get("place_id") or f"candidate-{index}"),
-            "name": str(item.get("display_name") or "").split(",")[0].strip(),
-            "address": str(item.get("display_name") or "").strip(),
+            "id": str(props.get("osm_id") or f"candidate-{index}"),
+            "name": str(props.get("name") or "").strip(),
+            "address": _photon_feature_to_address(props),
             "latitude": lat,
             "longitude": lon,
         })
@@ -328,14 +345,16 @@ async def chaoxing_location_reverse_geocode(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    result = await _run_blocking(
-        _request_nominatim_json,
+    data = await _run_blocking(
+        _request_photon_json,
         "/reverse",
-        {"lat": lat, "lon": lng, "accept-language": "zh-CN"},
+        {"lat": lat, "lon": lng, "lang": "default"},
     )
     address = ""
-    if isinstance(result, dict):
-        address = str(result.get("display_name") or "").strip()
+    features = data.get("features") or [] if isinstance(data, dict) else []
+    if features:
+        props = features[0].get("properties", {})
+        address = _photon_feature_to_address(props)
     return {
         "status": True,
         "message": "ok",
