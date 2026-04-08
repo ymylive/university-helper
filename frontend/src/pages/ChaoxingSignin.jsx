@@ -3275,35 +3275,7 @@ export default function ChaoxingSignin() {
 
                       key={idx}
 
-                      className={`${GLASS_PANEL_CLASS} ${isBackgroundTask && backgroundTaskId ? 'cursor-pointer transition-all duration-200 hover:border-primary/40' : ''}`}
-
-                      role={isBackgroundTask && backgroundTaskId ? 'button' : undefined}
-
-                      tabIndex={isBackgroundTask && backgroundTaskId ? 0 : undefined}
-
-                      onClick={() => {
-
-                        if (isBackgroundTask && backgroundTaskId) {
-
-                          void openBackgroundTask(backgroundTaskId)
-
-                        }
-
-                      }}
-
-                      onKeyDown={(event) => {
-
-                        if (!isBackgroundTask || !backgroundTaskId) return
-
-                        if (event.key === 'Enter' || event.key === ' ') {
-
-                          event.preventDefault()
-
-                          void openBackgroundTask(backgroundTaskId)
-
-                        }
-
-                      }}
+                      className={GLASS_PANEL_CLASS}
 
                     >
 
