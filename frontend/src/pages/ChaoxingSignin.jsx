@@ -187,7 +187,7 @@ const normalizeSignTypeForApi = (value) => {
 
 const shouldUseLocationParams = (value) => {
 
-  return value === 'location' || value === 'qrcode' || value === 'gesture'
+  return value === 'location' || value === 'qrcode' || value === 'gesture' || value === 'all'
 
 }
 
@@ -876,19 +876,19 @@ export default function ChaoxingSignin() {
 
 
 
-    if (signType === 'qrcode' && form.qrCode.trim()) {
+    if ((signType === 'qrcode' || signType === 'all') && form.qrCode.trim()) {
 
       payload.qr_code = form.qrCode.trim()
 
     }
 
-    if (signType === 'code' && form.signCode.trim()) {
+    if ((signType === 'code' || signType === 'all') && form.signCode.trim()) {
 
       payload.sign_code = form.signCode.trim()
 
     }
 
-    if (signType === 'gesture' && form.gesturePattern.trim()) {
+    if ((signType === 'gesture' || signType === 'all') && form.gesturePattern.trim()) {
 
       payload.gesture = form.gesturePattern.trim()
 
@@ -942,35 +942,35 @@ export default function ChaoxingSignin() {
 
         }
 
+      }
+
+      if (signType === 'qrcode' && !payload.qr_code) {
+
+        throw new Error('二维码签到需要提供二维码内容，请上传二维码图片或手动输入。')
+
+      }
+
+      if (signType === 'gesture' && !payload.gesture) {
+
+        throw new Error('手势签到需要输入手势编码。')
+
+      }
+
+      if (signType === 'code' && !payload.sign_code) {
+
+        throw new Error('签到码签到需要输入签到码。')
+
+      }
+
+      if (form.photoFile && (signType === 'photo' || signType === 'all')) {
+
         const photoBase64 = await fileToBase64(form.photoFile)
 
         payload.photo_base64 = photoBase64
 
-        resp = await requestChaoxingApi('/sign', payload)
-
-      } else {
-
-        if (signType === 'qrcode' && !payload.qr_code) {
-
-          throw new Error('二维码签到需要提供二维码内容，请上传二维码图片或手动输入。')
-
-        }
-
-        if (signType === 'gesture' && !payload.gesture) {
-
-          throw new Error('手势签到需要输入手势编码。')
-
-        }
-
-        if (signType === 'code' && !payload.sign_code) {
-
-          throw new Error('签到码签到需要输入签到码。')
-
-        }
-
-        resp = await requestChaoxingApi('/sign', payload)
-
       }
+
+      resp = await requestChaoxingApi('/sign', payload)
 
 
 
@@ -1801,13 +1801,7 @@ export default function ChaoxingSignin() {
 
       let resp
 
-      if (signType === 'photo') {
-
-        if (!form.photoFile) {
-
-          throw new Error('拍照签到任务需要先上传图片。')
-
-        }
+      if (form.photoFile && (signType === 'photo' || signType === 'all')) {
 
         const photoBase64 = await fileToBase64(form.photoFile)
 
@@ -2309,7 +2303,7 @@ export default function ChaoxingSignin() {
 
             </div>
 
-                {form.signType === 'photo' && (
+                {(form.signType === 'photo' || form.signType === 'all') && (
 
                   <div className="md:col-span-2">
 
@@ -2379,7 +2373,7 @@ export default function ChaoxingSignin() {
 
                 )}
 
-                {(form.signType === 'location' || form.signType === 'qrcode' || form.signType === 'gesture') && (
+                {(form.signType === 'location' || form.signType === 'qrcode' || form.signType === 'gesture' || form.signType === 'all') && (
 
                   <>
 
@@ -2577,7 +2571,7 @@ export default function ChaoxingSignin() {
 
                 )}
 
-                {form.signType === 'qrcode' && (
+                {(form.signType === 'qrcode' || form.signType === 'all') && (
 
                   <div className="md:col-span-2 space-y-4">
 
@@ -2661,7 +2655,7 @@ export default function ChaoxingSignin() {
 
                 )}
 
-                {form.signType === 'gesture' && (
+                {(form.signType === 'gesture' || form.signType === 'all') && (
 
                   <div className="md:col-span-2">
 
@@ -2691,7 +2685,7 @@ export default function ChaoxingSignin() {
 
                 )}
 
-                {form.signType === 'code' && (
+                {(form.signType === 'code' || form.signType === 'all') && (
 
                   <div className="md:col-span-2">
 
