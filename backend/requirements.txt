@@ -15,3 +15,4 @@ loguru==0.7.3
 httpx==0.28.1
 pyaes==1.6.1
 fonttools==4.61.1
+cryptography>=42,<44

@@ -6,9 +6,81 @@ from typing import Any, Dict, List, Optional
 
 from psycopg2.extras import Json
 
+from app.core.credential_crypto import (
+    decrypt_dict_fields,
+    encrypt_dict_fields,
+)
 from app.db.session import get_db_session
 
 logger = logging.getLogger(__name__)
+
+# Fields treated as sensitive credentials. Values are encrypted before JSONB
+# serialization and decrypted on read. Kept conservative — extend only with
+# evidence that the field actually holds a secret.
+_SENSITIVE_FIELDS: tuple[str, ...] = (
+    "password",
+    "user_password",
+    "third_party_password",
+)
+# Nested containers that may hold credentials. We recurse one level into them.
+_SENSITIVE_CONTAINERS: tuple[str, ...] = ("credentials",)
+
+
+def _encrypt_sensitive(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Encrypt top-level + ``payload.credentials.*`` sensitive keys.
+
+    Fail-closed: if encryption raises, the offending field is DROPPED rather
+    than persisted in plaintext. Other fields pass through.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    try:
+        encrypted = encrypt_dict_fields(payload, _SENSITIVE_FIELDS)
+    except Exception:
+        logger.exception("task_store: encrypt top-level sensitive fields failed")
+        encrypted = dict(payload)
+        for field in _SENSITIVE_FIELDS:
+            encrypted.pop(field, None)
+
+    for container in _SENSITIVE_CONTAINERS:
+        nested = encrypted.get(container)
+        if isinstance(nested, dict):
+            try:
+                encrypted[container] = encrypt_dict_fields(nested, _SENSITIVE_FIELDS)
+            except Exception:
+                logger.exception(
+                    "task_store: encrypt nested container=%s failed", container
+                )
+                cleaned = dict(nested)
+                for field in _SENSITIVE_FIELDS:
+                    cleaned.pop(field, None)
+                encrypted[container] = cleaned
+    return encrypted
+
+
+def _decrypt_sensitive(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Decrypt top-level + ``payload.credentials.*`` sensitive keys.
+
+    Legacy (non-``fernet:``-prefixed) values pass through unchanged.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    try:
+        decrypted = decrypt_dict_fields(payload, _SENSITIVE_FIELDS)
+    except Exception:
+        logger.exception("task_store: decrypt top-level sensitive fields failed")
+        decrypted = dict(payload)
+
+    for container in _SENSITIVE_CONTAINERS:
+        nested = decrypted.get(container)
+        if isinstance(nested, dict):
+            try:
+                decrypted[container] = decrypt_dict_fields(nested, _SENSITIVE_FIELDS)
+            except Exception:
+                logger.exception(
+                    "task_store: decrypt nested container=%s failed", container
+                )
+    return decrypted
 
 
 class TaskStore:
@@ -91,6 +163,7 @@ class TaskStore:
             or datetime.now(timezone.utc)
         )
         payload = self._normalize_json(task_state_public)
+        payload = _encrypt_sensitive(payload)
 
         self.ensure_tables()
         try:
@@ -178,6 +251,7 @@ class TaskStore:
 
         payload = row.get("payload")
         item = dict(payload) if isinstance(payload, dict) else {}
+        item = _decrypt_sensitive(item)
         item["task_id"] = str(row.get("task_id") or item.get("task_id") or "")
         item["user_id"] = str(row.get("user_id") or item.get("user_id") or "")
         item["status"] = str(row.get("status") or item.get("status") or "")
@@ -246,6 +320,7 @@ class TaskStore:
         for row in rows:
             payload = row.get("payload")
             item = dict(payload) if isinstance(payload, dict) else {}
+            item = _decrypt_sensitive(item)
             item["task_id"] = str(row.get("task_id") or item.get("task_id") or "")
             item["user_id"] = str(row.get("user_id") or item.get("user_id") or "")
             item["status"] = str(row.get("status") or item.get("status") or "")
@@ -283,6 +358,7 @@ class TaskStore:
         )
         if not payload.get("timestamp"):
             payload["timestamp"] = self._datetime_to_iso(event_time)
+        payload = _encrypt_sensitive(payload)
 
         safe_keep = max(1, min(int(max_records or 500), 5000))
         self.ensure_tables()
@@ -382,6 +458,7 @@ class TaskStore:
         for row in rows:
             payload = row.get("payload")
             item = dict(payload) if isinstance(payload, dict) else {}
+            item = _decrypt_sensitive(item)
             if not item.get("timestamp"):
                 item["timestamp"] = self._datetime_to_iso(row.get("event_time"))
             if not user_id:
