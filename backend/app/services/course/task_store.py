@@ -69,8 +69,8 @@ class TaskStore:
                     )
                     cur.close()
                 self._initialized = True
-            except Exception as exc:
-                logger.warning("task_store ensure_tables failed: %s", exc)
+            except Exception:
+                logger.exception("task_store ensure_tables failed")
 
     def upsert_task(self, task_kind: str, task_state_public: Dict[str, Any]) -> None:
         if not task_kind or not isinstance(task_state_public, dict):
@@ -122,12 +122,11 @@ class TaskStore:
                     ),
                 )
                 cur.close()
-        except Exception as exc:
-            logger.warning(
-                "task_store upsert_task failed: kind=%s task_id=%s err=%s",
+        except Exception:
+            logger.exception(
+                "task_store upsert_task failed: kind=%s task_id=%s",
                 task_kind,
                 task_id,
-                exc,
             )
 
     def get_task(
@@ -165,13 +164,12 @@ class TaskStore:
                     )
                 row = cur.fetchone()
                 cur.close()
-        except Exception as exc:
-            logger.warning(
-                "task_store get_task failed: kind=%s task_id=%s user=%s err=%s",
+        except Exception:
+            logger.exception(
+                "task_store get_task failed: kind=%s task_id=%s user=%s",
                 task_kind,
                 task_id,
                 user_id,
-                exc,
             )
             return None
 
@@ -236,12 +234,11 @@ class TaskStore:
                     )
                 rows = cur.fetchall() or []
                 cur.close()
-        except Exception as exc:
-            logger.warning(
-                "task_store list_tasks failed: kind=%s user=%s err=%s",
+        except Exception:
+            logger.exception(
+                "task_store list_tasks failed: kind=%s user=%s",
                 task_kind,
                 user_id,
-                exc,
             )
             return []
 
@@ -328,12 +325,11 @@ class TaskStore:
                     ),
                 )
                 cur.close()
-        except Exception as exc:
-            logger.warning(
-                "task_store append_history failed: kind=%s user=%s err=%s",
+        except Exception:
+            logger.exception(
+                "task_store append_history failed: kind=%s user=%s",
                 history_kind,
                 user_id,
-                exc,
             )
 
     def list_history(
@@ -374,12 +370,11 @@ class TaskStore:
                     )
                 rows = cur.fetchall() or []
                 cur.close()
-        except Exception as exc:
-            logger.warning(
-                "task_store list_history failed: kind=%s user=%s err=%s",
+        except Exception:
+            logger.exception(
+                "task_store list_history failed: kind=%s user=%s",
                 history_kind,
                 user_id,
-                exc,
             )
             return []
 

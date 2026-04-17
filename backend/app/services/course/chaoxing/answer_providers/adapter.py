@@ -1,14 +1,10 @@
 from re import sub
 
 import requests
-from urllib3 import disable_warnings, exceptions
 
 from loguru import logger
 
 from ..answer_base import Tiku
-
-# 关闭警告
-disable_warnings(exceptions.InsecureRequestWarning)
 
 
 class TikuAdapter(Tiku):
@@ -39,7 +35,7 @@ class TikuAdapter(Tiku):
                 'options': [sub(r'^[A-Za-z]\.?、?\s?', '', option) for option in options.split('\n')],
                 'type': type
             },
-            verify=False
+            timeout=30,
         )
         if res.status_code == 200:
             res_json = res.json()

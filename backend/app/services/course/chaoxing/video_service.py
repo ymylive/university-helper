@@ -298,7 +298,7 @@ class ChaoxingVideoService:
                         _duration = refreshed_meta.get("duration", duration)
                         play_time = refreshed_meta.get("playTime", play_time)
 
-                        logger.debug("Refreshed token: {}, duration: {}, play time: {}", _dtoken, _duration, play_time)
+                        logger.debug("Refreshed session: duration={}, play_time={}", _duration, play_time)
                         continue
 
                 elif not passed and state != 200:

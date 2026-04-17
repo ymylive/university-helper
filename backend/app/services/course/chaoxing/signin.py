@@ -841,7 +841,7 @@ class ChaoxingSigninClient:
             return ""
         raw = payload.split(",", 1)[1] if payload.startswith("data:image") and "," in payload else payload
         try:
-            image_bytes = base64.b64decode(raw, validate=False)
+            image_bytes = base64.b64decode(raw, validate=True)
         except Exception as exc:
             logger.warning("photo upload: base64 decode failed: %s", exc)
             return ""

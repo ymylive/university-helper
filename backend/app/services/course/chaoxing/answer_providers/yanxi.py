@@ -1,12 +1,8 @@
 import requests
-from urllib3 import disable_warnings, exceptions
 
 from loguru import logger
 
 from ..answer_base import Tiku
-
-# 关闭警告
-disable_warnings(exceptions.InsecureRequestWarning)
 
 
 class TikuYanxi(Tiku):
@@ -28,7 +24,7 @@ class TikuYanxi(Tiku):
                 # 'type':q_info['type'], #修复478题目类型与答案类型不符（不想写后处理了）
                 # 没用，就算有type和options，言溪题库还是可能返回类型不符，问了客服，type仅用于收集
             },
-            verify=False
+            timeout=30,
         )
         if res.status_code == 200:
             res_json = res.json()

@@ -21,9 +21,18 @@ class AuthService:
     def _b64url_encode(data: bytes) -> str:
         return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
 
+    _SHUAKE_SECRET_MIN_LEN = 32
+
     def _create_shuake_token(self, user_id: int) -> str | None:
         secret = (os.getenv("SHUAKE_COMPAT_SECRET") or "").strip()
         if not secret:
+            return None
+        if len(secret) < self._SHUAKE_SECRET_MIN_LEN:
+            logger.warning(
+                "SHUAKE_COMPAT_SECRET is configured but shorter than %d chars; "
+                "refusing to issue shuake tokens. Rotate to a stronger secret.",
+                self._SHUAKE_SECRET_MIN_LEN,
+            )
             return None
 
         payload = {

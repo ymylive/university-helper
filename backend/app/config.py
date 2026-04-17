@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     # Security
     ENFORCE_HTTPS: bool = True
 
-    # Docs / Swagger UI — set to False in production to hide API docs
-    DOCS_ENABLED: bool = True
+    # Docs / Swagger UI — default off; opt in via env for local dev
+    DOCS_ENABLED: bool = False
 
     BAIDU_MAP_API_KEY: Optional[str] = None
 

@@ -9,8 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.dependencies import get_current_user, get_db
-from app.api.v1.chaoxing import router as chaoxing_router
+from app.dependencies import get_current_user
 from app.services.course.chaoxing.signin import signin_manager
 from app.services.course.zhihuishu.adapter import ZhihuishuAdapter
 
@@ -97,10 +96,7 @@ async def _run_blocking(func, *args, **kwargs):
 async def start_course_learning(
     request: CourseStartRequest,
     current_user: dict = Depends(get_current_user),
-    db: Any = Depends(get_db),
 ):
-    del db
-
     if request.platform.lower() != "chaoxing":
         raise HTTPException(status_code=400, detail="Only chaoxing is supported")
 
@@ -140,8 +136,7 @@ async def start_course_learning(
 
 
 @router.get("/status/{task_id}", response_model=CourseStatusResponse)
-async def get_course_status(task_id: str, current_user: dict = Depends(get_current_user), db: Any = Depends(get_db)):
-    del db
+async def get_course_status(task_id: str, current_user: dict = Depends(get_current_user)):
     user_id = _current_user_id(current_user)
 
     chaoxing_task = None
@@ -354,9 +349,6 @@ def _register_zhihuishu_course_task(
             "updated_at": time.time(),
         },
     )
-
-
-router.include_router(chaoxing_router, prefix="/chaoxing", tags=["chaoxing"])
 
 
 @router.post("/zhihuishu/qr-login", response_model=ZhihuishuQRLoginResponse)
@@ -904,10 +896,7 @@ async def zhihuishu_cancel(current_user: dict = Depends(get_current_user)):
 async def course_login(
     request: CourseStartRequest,
     current_user: dict = Depends(get_current_user),
-    db: Any = Depends(get_db),
 ):
-    del db
-
     if request.platform.lower() != "chaoxing":
         raise HTTPException(status_code=400, detail="Only chaoxing is supported")
 
@@ -940,9 +929,7 @@ async def course_login(
 @router.get("/courses")
 async def get_courses(
     current_user: dict = Depends(get_current_user),
-    db: Any = Depends(get_db),
 ):
-    del db
     user_id = _current_user_id(current_user)
     courses = await _run_blocking(signin_manager.get_courses, user_id)
     return {
@@ -957,9 +944,7 @@ async def get_courses(
 async def get_chapters(
     course_id: str,
     current_user: dict = Depends(get_current_user),
-    db: Any = Depends(get_db),
 ):
-    del db
     user_id = _current_user_id(current_user)
 
     try:
@@ -1007,8 +992,7 @@ async def get_chapters(
 
 
 @router.post("/notify/test")
-async def test_notification(request: dict, db: Any = Depends(get_db)):
-    del db
+async def test_notification(request: dict):
 
     service = request.get("service")
     url = request.get("url")

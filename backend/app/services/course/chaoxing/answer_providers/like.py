@@ -2,14 +2,10 @@ import json
 import random
 
 import requests
-from urllib3 import disable_warnings, exceptions
 
 from loguru import logger
 
 from ..answer_base import Tiku
-
-# 关闭警告
-disable_warnings(exceptions.InsecureRequestWarning)
 
 
 class TikuLike(Tiku):
@@ -119,8 +115,7 @@ class TikuLike(Tiku):
                 self.query_api,
                 json=request_data,
                 headers=temp_headers,
-                verify=False,
-                timeout=self._timeout  # 添加超时设置
+                timeout=self._timeout,
             )
         except requests.exceptions.Timeout:
             logger.error(f'{self.name}查询超时: 请求超过300秒')
@@ -276,8 +271,7 @@ class TikuLike(Tiku):
             res = requests.post(
                 self.balance_api,
                 headers=temp_headers,
-                verify=False,
-                timeout=self._timeout
+                timeout=self._timeout,
             )
             if res.status_code == 200:
                 res_json = res.json()
