@@ -7,10 +7,14 @@ from typing import Dict, Optional, Tuple
 
 
 class RateLimiter:
+    MAX_CACHE_SIZE = 10000
+    CLEANUP_INTERVAL = 100  # Run cleanup every N requests
+
     def __init__(self, requests: int = 5, window: int = 60):
         self.requests = requests
         self.window = window
         self._cache: Dict[str, Tuple[int, datetime]] = defaultdict(lambda: (0, datetime.now()))
+        self._request_count: int = 0
 
     def _is_trusted_proxy(self, host: str) -> bool:
         candidate = str(host or "").strip()
@@ -26,7 +30,38 @@ class RateLimiter:
 
         return parsed.is_private or parsed.is_loopback or parsed.is_link_local
 
+    def _cleanup_expired(self) -> None:
+        """Remove expired entries to prevent unbounded memory growth."""
+        now = datetime.now()
+        expired_keys = [
+            key for key, (_, start_time) in self._cache.items()
+            if now - start_time > timedelta(seconds=self.window)
+        ]
+        for key in expired_keys:
+            del self._cache[key]
+
+    def _evict_oldest(self) -> None:
+        """Evict oldest entries when cache exceeds MAX_CACHE_SIZE."""
+        if len(self._cache) <= self.MAX_CACHE_SIZE:
+            return
+        # Sort by start_time (oldest first) and remove excess entries
+        sorted_keys = sorted(self._cache, key=lambda k: self._cache[k][1])
+        evict_count = len(self._cache) - self.MAX_CACHE_SIZE
+        for key in sorted_keys[:evict_count]:
+            del self._cache[key]
+
+    def _maybe_cleanup(self) -> None:
+        """Periodically clean up expired and excess entries."""
+        self._request_count += 1
+        if self._request_count % self.CLEANUP_INTERVAL == 0:
+            self._cleanup_expired()
+            self._evict_oldest()
+
     def _get_forwarded_client_id(self, request: Request) -> Optional[str]:
+        # NOTE: X-Forwarded-For is only trusted when the direct client is a
+        # known private/loopback proxy (see _is_trusted_proxy). In production,
+        # pair this with TrustedHostMiddleware and ensure Nginx/load balancer
+        # overwrites X-Forwarded-For so upstream clients cannot spoof it.
         forwarded_for = str(request.headers.get("x-forwarded-for") or "").strip()
         if forwarded_for:
             for part in forwarded_for.split(","):
@@ -54,6 +89,7 @@ class RateLimiter:
         self._cache.clear()
 
     def check_rate_limit(self, request: Request) -> None:
+        self._maybe_cleanup()
         client_id = self._get_client_id(request)
         count, start_time = self._cache[client_id]
         now = datetime.now()

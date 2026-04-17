@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     # Database
     MAIN_DB_HOST: str = "localhost"
     MAIN_DB_NAME: str = "main_db"
-    MAIN_DB_USER: str = "postgres"
-    MAIN_DB_PASSWORD: str = "postgres"
+    MAIN_DB_USER: str
+    MAIN_DB_PASSWORD: str
     MAIN_DB_PORT: int = 5432
 
     # JWT
@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # Security
     ENFORCE_HTTPS: bool = True
+
+    # Docs / Swagger UI — set to False in production to hide API docs
+    DOCS_ENABLED: bool = True
 
     BAIDU_MAP_API_KEY: Optional[str] = None
 

@@ -11,6 +11,14 @@ auth_service = AuthService()
 logger = logging.getLogger(__name__)
 
 
+def _mask_email(email: str) -> str:
+    """Mask email for safe logging: user@example.com -> u***@example.com"""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.rsplit("@", 1)
+    return f"{local[0]}***@{domain}" if local else f"***@{domain}"
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(request: RegisterRequest, req: Request):
     rate_limiter.check_rate_limit(req)
@@ -20,16 +28,16 @@ async def register(request: RegisterRequest, req: Request):
             email=request.email,
             password=request.password
         )
-        logger.info(f"User registered: {request.email}")
+        logger.info(f"User registered: {_mask_email(request.email)}")
         return result
     except UserAlreadyExistsError:
-        logger.warning(f"Registration failed - user exists: {request.email}")
+        logger.warning(f"Registration failed - user exists: {_mask_email(request.email)}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
     except ValueError as e:
-        logger.warning(f"Registration validation error: {request.email}, error: {e}")
+        logger.warning(f"Registration validation error: {_mask_email(request.email)}, error: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except DatabaseError as e:
-        logger.error(f"Database error during registration: {request.email}")
+        logger.error(f"Database error during registration: {_mask_email(request.email)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
 
 
@@ -41,16 +49,16 @@ async def login(request: LoginRequest, req: Request):
             email=request.email,
             password=request.password
         )
-        logger.info(f"User logged in: {request.email}")
+        logger.info(f"User logged in: {_mask_email(request.email)}")
         return result
     except InvalidCredentialsError:
-        logger.warning(f"Login failed - invalid credentials: {request.email}")
+        logger.warning(f"Login failed - invalid credentials: {_mask_email(request.email)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     except ValueError as e:
-        logger.warning(f"Login validation/credential error: {request.email}, error: {e}")
+        logger.warning(f"Login validation/credential error: {_mask_email(request.email)}, error: {e}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
     except DatabaseError as e:
-        logger.error(f"Database error during login: {request.email}")
+        logger.error(f"Database error during login: {_mask_email(request.email)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
 
 
