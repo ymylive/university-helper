@@ -1,14 +1,13 @@
-import time
+import asyncio
 
 from api.config import GlobalConst as gc
 from api.live import Live
 from api.logger import logger
-import time
 import threading
 
 class LiveProcessor:
     @staticmethod
-    def run_live(live: Live, speed: float = 1.0, should_stop=None):
+    async def run_live(live: Live, speed: float = 1.0, should_stop=None):
         """Loop until the live task duration is satisfied."""
         live_status = live.get_status()
         if not live_status:
@@ -43,7 +42,7 @@ class LiveProcessor:
                         logger.info("Live task cancelled: {}", live.name)
                         return False
                     interval = min(0.5, retry_sleep)
-                    time.sleep(interval)
+                    await asyncio.sleep(interval)
                     retry_sleep -= interval
                 live.do_finish()
 

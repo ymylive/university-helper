@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import argparse
 import configparser
 import enum
@@ -273,7 +274,7 @@ def process_job(chaoxing: Chaoxing, course: dict, job: dict, job_info: dict, spe
             run_state = {"result": None}
 
             def _run_live():
-                run_state["result"] = LiveProcessor.run_live(live, speed, should_stop_callback)
+                run_state["result"] = asyncio.run(LiveProcessor.run_live(live, speed, should_stop_callback))
 
             thread = threading.Thread(
                 target=_run_live,
