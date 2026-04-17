@@ -7,9 +7,13 @@ import json
 import hmac
 import hashlib
 import base64
+import logging
+import asyncio
 from app.core.security import hash_password, verify_password, create_access_token
 from app.db.session import get_db_session
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -46,6 +50,33 @@ class AuthService:
         if not re.search(r'\d', password):
             raise ValueError("Password must contain digit")
 
+    @staticmethod
+    def _create_tenant_database(tenant_db_name: str) -> None:
+        """Create a tenant database from template. Runs in a background thread."""
+        ddl_conn = None
+        try:
+            ddl_conn = psycopg2.connect(
+                host=settings.MAIN_DB_HOST,
+                database=settings.MAIN_DB_NAME,
+                user=settings.MAIN_DB_USER,
+                password=settings.MAIN_DB_PASSWORD,
+                port=settings.MAIN_DB_PORT
+            )
+            ddl_conn.autocommit = True
+            ddl_cur = ddl_conn.cursor()
+            ddl_cur.execute(
+                sql.SQL("CREATE DATABASE {} TEMPLATE tenant_template").format(
+                    sql.Identifier(tenant_db_name)
+                )
+            )
+            ddl_cur.close()
+            logger.info("Tenant database %s created successfully", tenant_db_name)
+        except Exception:
+            logger.exception("Failed to create tenant database %s", tenant_db_name)
+        finally:
+            if ddl_conn:
+                ddl_conn.close()
+
     def register_user(self, username: str, email: str, password: str) -> dict:
         if not username.isalnum():
             raise ValueError("Username must be alphanumeric")
@@ -69,19 +100,10 @@ class AuthService:
             user_id = cur.fetchone()["id"]
             cur.close()
 
-        # Create tenant database with separate connection
-        ddl_conn = psycopg2.connect(
-            host=settings.MAIN_DB_HOST,
-            database=settings.MAIN_DB_NAME,
-            user=settings.MAIN_DB_USER,
-            password=settings.MAIN_DB_PASSWORD,
-            port=settings.MAIN_DB_PORT
+        # Create tenant database in background (non-blocking)
+        asyncio.get_event_loop().create_task(
+            asyncio.to_thread(self._create_tenant_database, tenant_db_name)
         )
-        ddl_conn.autocommit = True
-        ddl_cur = ddl_conn.cursor()
-        ddl_cur.execute(sql.SQL("CREATE DATABASE {} TEMPLATE tenant_template").format(sql.Identifier(tenant_db_name)))
-        ddl_cur.close()
-        ddl_conn.close()
 
         access_token = create_access_token({
             "user_id": user_id,
