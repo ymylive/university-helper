@@ -13,13 +13,20 @@ def test_settings_defaults():
 
 def test_settings_missing_secret_key():
     from pydantic_core import ValidationError
-    with patch.dict('os.environ', {}, clear=True):
+    with patch.dict('os.environ', {
+        'MAIN_DB_USER': 'u',
+        'MAIN_DB_PASSWORD': 'p',
+    }, clear=True):
         with pytest.raises(ValidationError):
             Settings()
 
 
 def test_settings_missing_cors():
-    with patch.dict('os.environ', {'SECRET_KEY': 'test'}, clear=True):
+    with patch.dict('os.environ', {
+        'SECRET_KEY': 'test',
+        'MAIN_DB_USER': 'u',
+        'MAIN_DB_PASSWORD': 'p',
+    }, clear=True):
         with pytest.raises(ValueError, match="CORS_ORIGINS must be set"):
             Settings()
 

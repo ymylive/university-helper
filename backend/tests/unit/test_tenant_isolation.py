@@ -1,5 +1,5 @@
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import Request
 from unittest.mock import Mock, AsyncMock, patch
 from app.middleware.tenant_isolation import tenant_isolation_middleware
 
@@ -31,11 +31,9 @@ async def test_whitelisted_paths(mock_call_next):
 
 @pytest.mark.asyncio
 async def test_missing_authorization_header(mock_request, mock_call_next):
-    with pytest.raises(HTTPException) as exc_info:
-        await tenant_isolation_middleware(mock_request, mock_call_next)
-
-    assert exc_info.value.status_code == 401
-    assert exc_info.value.detail == "Missing token"
+    response = await tenant_isolation_middleware(mock_request, mock_call_next)
+    assert response.status_code == 401
+    assert b"Missing token" in response.body
 
 
 @pytest.mark.asyncio
@@ -43,10 +41,8 @@ async def test_malformed_token(mock_request, mock_call_next):
     mock_request.headers = {"Authorization": "Bearer malformed_token"}
 
     with patch("app.middleware.tenant_isolation.decode_token", side_effect=Exception("Invalid token")):
-        with pytest.raises(HTTPException) as exc_info:
-            await tenant_isolation_middleware(mock_request, mock_call_next)
-
-        assert exc_info.value.status_code == 401
+        response = await tenant_isolation_middleware(mock_request, mock_call_next)
+        assert response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -54,10 +50,8 @@ async def test_expired_token(mock_request, mock_call_next):
     mock_request.headers = {"Authorization": "Bearer expired_token"}
 
     with patch("app.middleware.tenant_isolation.decode_token", side_effect=Exception("Token expired")):
-        with pytest.raises(HTTPException) as exc_info:
-            await tenant_isolation_middleware(mock_request, mock_call_next)
-
-        assert exc_info.value.status_code == 401
+        response = await tenant_isolation_middleware(mock_request, mock_call_next)
+        assert response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -65,11 +59,9 @@ async def test_missing_tenant_db_name(mock_request, mock_call_next):
     mock_request.headers = {"Authorization": "Bearer valid_token"}
 
     with patch("app.middleware.tenant_isolation.decode_token", return_value={"user_id": 1}):
-        with pytest.raises(HTTPException) as exc_info:
-            await tenant_isolation_middleware(mock_request, mock_call_next)
-
-        assert exc_info.value.status_code == 401
-        assert "Invalid token payload" in str(exc_info.value.detail)
+        response = await tenant_isolation_middleware(mock_request, mock_call_next)
+        assert response.status_code == 401
+        assert b"Invalid token payload" in response.body
 
 
 @pytest.mark.asyncio
@@ -77,11 +69,9 @@ async def test_missing_user_id(mock_request, mock_call_next):
     mock_request.headers = {"Authorization": "Bearer valid_token"}
 
     with patch("app.middleware.tenant_isolation.decode_token", return_value={"tenant_db_name": "tenant_test"}):
-        with pytest.raises(HTTPException) as exc_info:
-            await tenant_isolation_middleware(mock_request, mock_call_next)
-
-        assert exc_info.value.status_code == 401
-        assert "Invalid token payload" in str(exc_info.value.detail)
+        response = await tenant_isolation_middleware(mock_request, mock_call_next)
+        assert response.status_code == 401
+        assert b"Invalid token payload" in response.body
 
 
 @pytest.mark.asyncio

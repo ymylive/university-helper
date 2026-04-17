@@ -11,7 +11,8 @@ os.environ.setdefault("CORS_ORIGINS", '["http://localhost:3000"]')
 def client():
     from fastapi.testclient import TestClient
     from app.main import app
-    return TestClient(app)
+    # base_url=http://localhost so TrustedHostMiddleware accepts the Host header
+    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture(autouse=True)

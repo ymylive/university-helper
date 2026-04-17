@@ -1,10 +1,11 @@
 ﻿import base64
 import io
+import time
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
-from starlette.datastructures import FormData, UploadFile
+from starlette.datastructures import FormData, Headers, UploadFile
 
 import app.api.v1.chaoxing as chaoxing_api
 import app.api.v1.course as course_api
@@ -83,7 +84,7 @@ async def test_start_course_success():
         speed=1.5,
     )
     with patch("app.api.v1.course.signin_manager.login", return_value={"status": True, "message": "ok"}):
-        response = await course_api.start_course_learning(request, current_user={"user_id": 1}, db=None)
+        response = await course_api.start_course_learning(request, current_user={"user_id": 1})
 
     assert response.status == "started"
     assert response.task_id
@@ -94,7 +95,7 @@ async def test_start_course_unsupported_platform():
     request = course_api.CourseStartRequest(platform="unknown", username="u", password="p")
 
     with pytest.raises(HTTPException) as exc_info:
-        await course_api.start_course_learning(request, current_user={"user_id": 1}, db=None)
+        await course_api.start_course_learning(request, current_user={"user_id": 1})
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Only chaoxing is supported"
@@ -108,8 +109,8 @@ async def test_course_login_and_courses():
     with patch("app.api.v1.course.signin_manager.login", return_value={"status": True, "message": "ok"}), patch(
         "app.api.v1.course.signin_manager.get_courses", return_value=mock_courses
     ):
-        login_resp = await course_api.course_login(request, current_user={"user_id": 1}, db=None)
-        list_resp = await course_api.get_courses(current_user={"user_id": 1}, db=None)
+        login_resp = await course_api.course_login(request, current_user={"user_id": 1})
+        list_resp = await course_api.get_courses(current_user={"user_id": 1})
 
     assert login_resp["courses"] == mock_courses
     assert list_resp["courses"] == mock_courses
@@ -134,7 +135,7 @@ async def test_chaoxing_compat_login_and_courses():
 async def test_zhihuishu_required_endpoints():
     user_id = "1"
     adapter = FakeZhihuishuAdapter()
-    course_api._user_adapters[user_id] = adapter
+    course_api._user_adapters[user_id] = {"adapter": adapter, "last_access": time.time()}
 
     courses_resp = await course_api.zhihuishu_get_courses(current_user={"user_id": 1})
     start_resp = await course_api.zhihuishu_start_course(
@@ -171,7 +172,7 @@ async def test_zhihuishu_progress_does_not_overwrite_other_same_course_tasks():
             "percentage": 100.0,
         }
     )
-    course_api._user_adapters[user_id] = adapter
+    course_api._user_adapters[user_id] = {"adapter": adapter, "last_access": time.time()}
 
     course_api._set_course_task(
         "old-task",
@@ -230,7 +231,14 @@ async def test_chaoxing_start_accepts_multipart_photo():
             ("sign_type", "photo"),
             ("speed", "1.0"),
             ("jobs", "1"),
-            ("photo", UploadFile(filename="demo.jpg", file=io.BytesIO(b"fake-image"))),
+            (
+                "photo",
+                UploadFile(
+                    filename="demo.jpg",
+                    file=io.BytesIO(b"fake-image"),
+                    headers=Headers({"content-type": "image/jpeg"}),
+                ),
+            ),
         ]
     )
 
@@ -254,7 +262,14 @@ async def test_chaoxing_sign_accepts_multipart_photo():
             ("username", "u"),
             ("password", "p"),
             ("sign_type", "photo"),
-            ("photo", UploadFile(filename="demo.jpg", file=io.BytesIO(b"fake-image"))),
+            (
+                "photo",
+                UploadFile(
+                    filename="demo.jpg",
+                    file=io.BytesIO(b"fake-image"),
+                    headers=Headers({"content-type": "image/jpeg"}),
+                ),
+            ),
         ]
     )
 

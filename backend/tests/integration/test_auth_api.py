@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 @pytest.fixture
 def client():
     from app.main import app
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture
@@ -71,8 +71,10 @@ class TestAuthRegistration:
             "password": "Test1234"
         })
 
-        assert response.status_code == 400
-        assert "alphanumeric" in response.json()["detail"]
+        # Pydantic field_validator on RegisterRequest rejects non-alphanumeric
+        # usernames at the schema layer, which FastAPI surfaces as 422.
+        assert response.status_code == 422
+        assert "alphanumeric" in response.text.lower()
 
 
 class TestAuthLogin:

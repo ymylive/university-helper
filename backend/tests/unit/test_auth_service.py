@@ -24,33 +24,36 @@ def mock_conn(mock_cursor):
     return conn
 
 
-def test_register_user_duplicate_email(auth_service, mock_conn, mock_cursor):
+@pytest.mark.asyncio
+async def test_register_user_duplicate_email(auth_service, mock_conn, mock_cursor):
     mock_cursor.fetchone.return_value = {"id": 1}
 
     with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
         with pytest.raises(ValueError, match="Email already registered"):
-            auth_service.register_user("user", "test@example.com", "pass123")
+            await auth_service.register_user("user", "test@example.com", "Password1")
 
 
-def test_register_user_sql_injection_attempt(auth_service, mock_conn, mock_cursor):
+@pytest.mark.asyncio
+async def test_register_user_sql_injection_attempt(auth_service, mock_conn, mock_cursor):
     mock_cursor.fetchone.side_effect = [None, {"id": 1}]
 
     with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
         with patch("app.services.auth_service.psycopg2.connect", return_value=mock_conn):
             with patch("app.services.auth_service.create_access_token", return_value="token"):
-                result = auth_service.register_user("user", "test@example.com", "pass123")
+                await auth_service.register_user("user", "test@example.com", "Password1")
 
                 call_args = mock_cursor.execute.call_args_list[1][0]
                 assert "%s" in call_args[0]
 
 
-def test_register_user_success(auth_service, mock_conn, mock_cursor):
+@pytest.mark.asyncio
+async def test_register_user_success(auth_service, mock_conn, mock_cursor):
     mock_cursor.fetchone.side_effect = [None, {"id": 1}]
 
     with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
         with patch("app.services.auth_service.psycopg2.connect", return_value=mock_conn):
             with patch("app.services.auth_service.create_access_token", return_value="token123"):
-                result = auth_service.register_user("testuser", "test@example.com", "pass123")
+                result = await auth_service.register_user("testuser", "test@example.com", "Password1")
 
                 assert result["access_token"] == "token123"
                 assert result["user_id"] == 1

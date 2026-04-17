@@ -1,6 +1,6 @@
 import pytest
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.core.security import hash_password, verify_password, create_access_token, decode_token
 from app.config import settings
 
@@ -41,12 +41,12 @@ def test_decode_token_valid():
 
 
 def test_decode_token_expired():
-    data = {"user_id": 1, "exp": datetime.utcnow() - timedelta(minutes=1)}
+    data = {"user_id": 1, "exp": datetime.now(timezone.utc) - timedelta(minutes=1)}
     token = jwt.encode(data, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    with pytest.raises(jwt.ExpiredSignatureError):
+    with pytest.raises(ValueError, match="Token has expired"):
         decode_token(token)
 
 
 def test_decode_token_invalid():
-    with pytest.raises(jwt.InvalidTokenError):
+    with pytest.raises(ValueError, match="Invalid token"):
         decode_token("invalid_token")

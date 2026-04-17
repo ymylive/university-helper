@@ -27,7 +27,7 @@ def test_get_tenant_db_connection(mock_settings, mock_pool_class):
     mock_pool.getconn.return_value = mock_conn
     mock_pool_class.return_value = mock_pool
 
-    conn = get_tenant_db_connection("test_db")
+    conn = get_tenant_db_connection("tenant_testdb")
 
     assert conn == mock_conn
     mock_pool_class.assert_called_once()
