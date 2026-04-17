@@ -60,6 +60,18 @@ USER_TASK_LOAD_LIMIT = 2000
 BACKGROUND_TASK_ACTIVE_STATUSES = {"running", "pending", "paused", "cancelling"}
 TASK_FEED_FALLBACK_LIMIT = 3
 
+# Character windows used by the fallback parsers in _parse_courses to bound
+# how far apart related tokens (course id / class id / cpi / name) may appear
+# within the raw HTML+JS response before they are treated as unrelated.
+_PARSE_SNIPPET_BEFORE = 320
+_PARSE_SNIPPET_AFTER = 980
+_FALLBACK_ID_PAIR_GAP = 240
+_FALLBACK_JSON_IDS_GAP = 120
+_FALLBACK_JSON_NAME_GAP_IDS = 180
+_FALLBACK_JSON_NAME_GAP_NAME = 220
+_FALLBACK_HIDDEN_INPUT_BEFORE = 360
+_FALLBACK_HIDDEN_INPUT_AFTER = 1400
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -324,8 +336,8 @@ class ChaoxingSigninClient:
                     item["courseName"] = normalized_name
                 return
 
-            start = max(0, cursor - 320)
-            end = min(len(content), cursor + 980)
+            start = max(0, cursor - _PARSE_SNIPPET_BEFORE)
+            end = min(len(content), cursor + _PARSE_SNIPPET_AFTER)
             snippet = content[start:end]
 
             cpi_match = re.search(r"(?:[?&]cpi=|\"cpi\"\s*:\s*\"?)(\d+)", snippet)
@@ -428,49 +440,61 @@ class ChaoxingSigninClient:
         for match in re.finditer(r"course_(\d+)_(\d+)", content):
             append_course(match.group(1), match.group(2), match.start())
 
-        # Fallback parser: read IDs from href / query fragments
-        for pattern, reverse_pair in (
-            (r"(?:courseid|courseId)=(\d+)[^\"'<>]{0,240}(?:clazzid|classId)=(\d+)", False),
-            (r"(?:clazzid|classId)=(\d+)[^\"'<>]{0,240}(?:courseid|courseId)=(\d+)", True),
-            (r'"courseId"\s*:\s*"?(\d+)"?[\s\S]{0,120}?"(?:classId|clazzId)"\s*:\s*"?(\d+)"?', False),
-            (r'"(?:classId|clazzId)"\s*:\s*"?(\d+)"?[\s\S]{0,120}?"courseId"\s*:\s*"?(\d+)"?', True),
-        ):
-            for match in re.finditer(pattern, content, flags=re.IGNORECASE):
-                if reverse_pair:
-                    append_course(match.group(2), match.group(1), match.start())
-                else:
-                    append_course(match.group(1), match.group(2), match.start())
-
-        # Fallback parser: json blocks with explicit course name
-        for pattern, reverse_pair in (
-            (
-                r'"courseId"\s*:\s*"?(\d+)"?[\s\S]{0,180}?"(?:classId|clazzId)"\s*:\s*"?(\d+)"?[\s\S]{0,220}?"(?:courseName|name|title)"\s*:\s*"([^"]+)"',
-                False,
-            ),
-            (
-                r'"(?:classId|clazzId)"\s*:\s*"?(\d+)"?[\s\S]{0,180}?"courseId"\s*:\s*"?(\d+)"?[\s\S]{0,220}?"(?:courseName|name|title)"\s*:\s*"([^"]+)"',
-                True,
-            ),
-        ):
-            for match in re.finditer(pattern, content, flags=re.IGNORECASE):
-                if reverse_pair:
-                    append_course(match.group(2), match.group(1), match.start(), preferred_name=match.group(3))
-                else:
-                    append_course(match.group(1), match.group(2), match.start(), preferred_name=match.group(3))
-
-        # Fallback parser: hidden inputs on course cards
-        for match in re.finditer(
-            r'<input[^>]*class=["\'][^"\']*courseId[^"\']*["\'][^>]*value=["\'](\d+)["\']',
-            content,
-            flags=re.IGNORECASE,
-        ):
-            near = content[max(0, match.start() - 360): min(len(content), match.end() + 1400)]
-            class_match = re.search(
-                r'<input[^>]*class=["\'][^"\']*(?:clazzId|classId)[^"\']*["\'][^>]*value=["\'](\d+)["\']',
-                near,
-                flags=re.IGNORECASE,
+        def _run_id_pair_fallback() -> None:
+            """Fallback: paired course/class ids in href query or compact JSON."""
+            gap_query = _FALLBACK_ID_PAIR_GAP
+            gap_json = _FALLBACK_JSON_IDS_GAP
+            patterns = (
+                (rf"(?:courseid|courseId)=(\d+)[^\"'<>]{{0,{gap_query}}}(?:clazzid|classId)=(\d+)", False),
+                (rf"(?:clazzid|classId)=(\d+)[^\"'<>]{{0,{gap_query}}}(?:courseid|courseId)=(\d+)", True),
+                (rf'"courseId"\s*:\s*"?(\d+)"?[\s\S]{{0,{gap_json}}}?"(?:classId|clazzId)"\s*:\s*"?(\d+)"?', False),
+                (rf'"(?:classId|clazzId)"\s*:\s*"?(\d+)"?[\s\S]{{0,{gap_json}}}?"courseId"\s*:\s*"?(\d+)"?', True),
             )
-            if class_match:
+            for pattern, reverse_pair in patterns:
+                for match in re.finditer(pattern, content, flags=re.IGNORECASE):
+                    if reverse_pair:
+                        append_course(match.group(2), match.group(1), match.start())
+                    else:
+                        append_course(match.group(1), match.group(2), match.start())
+
+        def _run_json_named_fallback() -> None:
+            """Fallback: JSON blocks carrying an explicit course name near the ids."""
+            gap_ids = _FALLBACK_JSON_NAME_GAP_IDS
+            gap_name = _FALLBACK_JSON_NAME_GAP_NAME
+            patterns = (
+                (
+                    rf'"courseId"\s*:\s*"?(\d+)"?[\s\S]{{0,{gap_ids}}}?"(?:classId|clazzId)"\s*:\s*"?(\d+)"?[\s\S]{{0,{gap_name}}}?"(?:courseName|name|title)"\s*:\s*"([^"]+)"',
+                    False,
+                ),
+                (
+                    rf'"(?:classId|clazzId)"\s*:\s*"?(\d+)"?[\s\S]{{0,{gap_ids}}}?"courseId"\s*:\s*"?(\d+)"?[\s\S]{{0,{gap_name}}}?"(?:courseName|name|title)"\s*:\s*"([^"]+)"',
+                    True,
+                ),
+            )
+            for pattern, reverse_pair in patterns:
+                for match in re.finditer(pattern, content, flags=re.IGNORECASE):
+                    if reverse_pair:
+                        append_course(match.group(2), match.group(1), match.start(), preferred_name=match.group(3))
+                    else:
+                        append_course(match.group(1), match.group(2), match.start(), preferred_name=match.group(3))
+
+        def _run_hidden_input_fallback() -> None:
+            """Fallback: paired hidden <input> tags on rendered course cards."""
+            for match in re.finditer(
+                r'<input[^>]*class=["\'][^"\']*courseId[^"\']*["\'][^>]*value=["\'](\d+)["\']',
+                content,
+                flags=re.IGNORECASE,
+            ):
+                near_start = max(0, match.start() - _FALLBACK_HIDDEN_INPUT_BEFORE)
+                near_end = min(len(content), match.end() + _FALLBACK_HIDDEN_INPUT_AFTER)
+                near = content[near_start:near_end]
+                class_match = re.search(
+                    r'<input[^>]*class=["\'][^"\']*(?:clazzId|classId)[^"\']*["\'][^>]*value=["\'](\d+)["\']',
+                    near,
+                    flags=re.IGNORECASE,
+                )
+                if not class_match:
+                    continue
                 cpi_match = re.search(r"(?:[?&]cpi=|\"cpi\"\s*:\s*\"?)(\d+)", near, flags=re.IGNORECASE)
                 cpi = cpi_match.group(1) if cpi_match else ""
                 append_course(
@@ -480,6 +504,10 @@ class ChaoxingSigninClient:
                     preferred_name=_extract_name(near, match.group(1)),
                     preferred_cpi=cpi,
                 )
+
+        _run_id_pair_fallback()
+        _run_json_named_fallback()
+        _run_hidden_input_fallback()
 
         return courses
 
