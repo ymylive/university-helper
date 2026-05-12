@@ -22,4 +22,9 @@ COPY backend /srv/backend
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--loop", "uvloop", "--http", "httptools"]
+# --workers must stay 1 until ChaoxingSigninManager._clients is moved to a
+# shared store. Each uvicorn worker is a separate Python process with its
+# own in-memory _clients dict, so a login on worker A is invisible to
+# /courses requests routed to workers B/C/D — see signin.py:1156. uvloop
+# and httptools still help in single-worker mode.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--loop", "uvloop", "--http", "httptools"]
