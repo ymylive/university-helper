@@ -26,7 +26,10 @@ import {
   isBackgroundTaskRunning,
   safeStringify,
   buildCourseSelector,
+  buildClassSelector,
   getCourseDisplayName,
+  getClassDisplayName,
+  normalizeCourseText,
   parseTaskTimestamp,
 } from './chaoxing-signin/utils'
 
@@ -38,6 +41,7 @@ import StatsCards from './chaoxing-signin/components/StatsCards'
 import TasksTab from './chaoxing-signin/components/TasksTab'
 import HistoryTab from './chaoxing-signin/components/HistoryTab'
 import ConfigTab from './chaoxing-signin/components/ConfigTab'
+import AutoSigninBanner from './chaoxing-signin/components/AutoSigninBanner'
 
 
 
@@ -65,6 +69,8 @@ export default function ChaoxingSignin() {
 
   const [courses, setCourses] = useState([])
 
+  const [classSubjects, setClassSubjects] = useState([])
+
   const [signinTasks, setSigninTasks] = useState([])
 
   const [signinHistory, setSigninHistory] = useState([])
@@ -78,6 +84,8 @@ export default function ChaoxingSignin() {
     password: '',
 
     selectedCourseIds: [],
+
+    selectedClassIds: [],
 
     signType: 'all',
 
@@ -235,7 +243,7 @@ export default function ChaoxingSignin() {
 
     },
 
-    []
+    [redirectToLogin]
 
   )
 
@@ -278,6 +286,27 @@ export default function ChaoxingSignin() {
       if (!redirectingRef.current) {
 
         console.error('Failed to fetch courses:', err)
+
+      }
+
+    }
+
+  }, [requestChaoxingApi])
+
+
+  const fetchClasses = useCallback(async () => {
+
+    try {
+
+      const resp = await requestChaoxingApi('/classes')
+
+      setClassSubjects(resp?.data || resp?.classes || [])
+
+    } catch (err) {
+
+      if (!redirectingRef.current) {
+
+        console.error('Failed to fetch class subjects:', err)
 
       }
 
@@ -434,6 +463,43 @@ export default function ChaoxingSignin() {
   }, [form])
 
 
+  const applySigninAssets = useCallback(async (payload, signType) => {
+
+    if (signType === 'photo' && !form.photoFile) {
+
+      throw new Error('拍照签到需要先上传图片。')
+
+    }
+
+    if (signType === 'qrcode' && !payload.qr_code) {
+
+      throw new Error('二维码签到需要提供二维码内容，请上传二维码图片或手动输入。')
+
+    }
+
+    if (signType === 'gesture' && !payload.gesture) {
+
+      throw new Error('手势签到需要输入手势编码。')
+
+    }
+
+    if (signType === 'code' && !payload.sign_code) {
+
+      throw new Error('签到码签到需要输入签到码。')
+
+    }
+
+    if (form.photoFile && (signType === 'photo' || signType === 'all')) {
+
+      payload.photo_base64 = await fileToBase64(form.photoFile)
+
+    }
+
+    return payload
+
+  }, [form.photoFile])
+
+
 
   const executeSignin = useCallback(async (courseId = null, signTypeOverride = null, options = {}) => {
 
@@ -463,47 +529,9 @@ export default function ChaoxingSignin() {
 
       const { payload, signType } = buildSigninPayload(courseId, signTypeOverride)
 
-      let resp
+      await applySigninAssets(payload, signType)
 
-
-
-      if (signType === 'photo') {
-
-        if (!form.photoFile) {
-
-          throw new Error('拍照签到需要先上传图片。')
-
-        }
-
-      }
-
-      if (signType === 'qrcode' && !payload.qr_code) {
-
-        throw new Error('二维码签到需要提供二维码内容，请上传二维码图片或手动输入。')
-
-      }
-
-      if (signType === 'gesture' && !payload.gesture) {
-
-        throw new Error('手势签到需要输入手势编码。')
-
-      }
-
-      if (signType === 'code' && !payload.sign_code) {
-
-        throw new Error('签到码签到需要输入签到码。')
-
-      }
-
-      if (form.photoFile && (signType === 'photo' || signType === 'all')) {
-
-        const photoBase64 = await fileToBase64(form.photoFile)
-
-        payload.photo_base64 = photoBase64
-
-      }
-
-      resp = await requestChaoxingApi('/sign', payload)
+      const resp = await requestChaoxingApi('/sign', payload)
 
 
 
@@ -545,7 +573,7 @@ export default function ChaoxingSignin() {
 
     }
 
-  }, [buildSigninPayload, fetchSigninHistory, form.password, form.photoFile, form.username, requestChaoxingApi])
+  }, [applySigninAssets, buildSigninPayload, fetchSigninHistory, form.password, form.username, requestChaoxingApi])
 
 
 
@@ -618,6 +646,8 @@ export default function ChaoxingSignin() {
 
         fetchCourses(),
 
+        fetchClasses(),
+
         fetchSigninTasks(),
 
         fetchSigninHistory(),
@@ -628,7 +658,7 @@ export default function ChaoxingSignin() {
 
       if (cancelled) return
 
-      const backgroundTasksResult = results[3]
+      const backgroundTasksResult = results[4]
 
       if (backgroundTasksResult.status !== 'fulfilled') return
 
@@ -664,7 +694,7 @@ export default function ChaoxingSignin() {
 
     }
 
-  }, [ensureAccessToken, navigate, stopPolling, stopAutoCheck, fetchCourses, fetchSigninTasks, fetchSigninHistory, fetchBackgroundTaskHistory, openBackgroundTask])
+  }, [ensureAccessToken, navigate, stopPolling, stopAutoCheck, fetchCourses, fetchClasses, fetchSigninTasks, fetchSigninHistory, fetchBackgroundTaskHistory, openBackgroundTask])
 
 
 
@@ -703,6 +733,57 @@ export default function ChaoxingSignin() {
   }, [courses])
 
 
+  const classOptions = useMemo(() => {
+
+    const source = Array.isArray(classSubjects) ? classSubjects : []
+
+    const seen = new Set()
+
+    const options = []
+
+
+
+    source.forEach((subject, index) => {
+
+      const id = buildClassSelector(subject)
+
+      const classId = normalizeCourseText(
+        subject?.classSubjectId || subject?.subjectId || subject?.classId || subject?.clazzId || subject?.class_id || subject?.clazz_id
+      )
+
+      const rawCourseId = normalizeCourseText(subject?.rawCourseId || subject?.courseId || subject?.course_id)
+
+      const courseSelector = buildCourseSelector(subject)
+
+      const key = id || classId || `${rawCourseId}-${index}`
+
+      if (!key || seen.has(key)) return
+
+      seen.add(key)
+
+      options.push({
+
+        id: key,
+
+        classId: classId || key,
+
+        courseId: rawCourseId,
+
+        courseSelector,
+
+        name: getClassDisplayName(subject, `班级 ${index + 1}`)
+
+      })
+
+    })
+
+
+
+    return options
+
+  }, [classSubjects])
+
+
 
   useEffect(() => {
 
@@ -732,6 +813,250 @@ export default function ChaoxingSignin() {
 
   }, [courseOptions])
 
+
+  useEffect(() => {
+
+    setForm((prev) => {
+
+      if (!Array.isArray(prev.selectedClassIds) || prev.selectedClassIds.length === 0) {
+
+        return prev
+
+      }
+
+      const validIds = new Set(classOptions.map((subject) => subject.id))
+
+      const nextSelected = prev.selectedClassIds.filter((id) => validIds.has(id))
+
+      const unchanged =
+
+        nextSelected.length === prev.selectedClassIds.length &&
+
+        nextSelected.every((id, index) => id === prev.selectedClassIds[index])
+
+      if (unchanged) return prev
+
+      return { ...prev, selectedClassIds: nextSelected }
+
+    })
+
+  }, [classOptions])
+
+
+  const executeClassSignin = useCallback(async (classOption, signTypeOverride = null, options = {}) => {
+
+    const silent = Boolean(options.silent)
+
+    if (!silent) {
+
+      setSubmitting(true)
+
+      setResultMessage('')
+
+    }
+
+
+
+    try {
+
+      const username = form.username.trim()
+
+      if (!username || !form.password) {
+
+        throw new Error('请输入账号和密码。')
+
+      }
+
+      if (!classOption?.classId) {
+
+        throw new Error('请选择有效的班级。')
+
+      }
+
+
+
+      const { payload, signType } = buildSigninPayload(null, signTypeOverride)
+
+      delete payload.course_id
+
+      payload.class_id = classOption.classId
+
+      if (classOption.courseSelector) payload.course_id = classOption.courseSelector
+
+      if (classOption.courseId && !payload.course_id) payload.course_id = classOption.courseId
+
+      await applySigninAssets(payload, signType)
+
+
+
+      const resp = await requestChaoxingApi('/class-sign', payload)
+
+      const message = pickMessage(resp) || '班级签到成功。'
+
+      if (!silent) {
+
+        setResultType('success')
+
+        setResultMessage(message)
+
+      }
+
+      await fetchSigninHistory()
+
+      return { status: true, message }
+
+    } catch (err) {
+
+      const message = err.message || '班级签到失败。'
+
+      if (!silent) {
+
+        setResultType('error')
+
+        setResultMessage(message)
+
+      }
+
+      return { status: false, message }
+
+    } finally {
+
+      if (!silent) {
+
+        setSubmitting(false)
+
+      }
+
+    }
+
+  }, [applySigninAssets, buildSigninPayload, fetchSigninHistory, form.password, form.username, requestChaoxingApi])
+
+
+  const executeSelectedClassSignin = useCallback(async () => {
+
+    if (submitting) return
+
+    const selectedClassOptions = form.selectedClassIds
+      .map((id) => classOptions.find((subject) => subject.id === id))
+      .filter(Boolean)
+
+    if (selectedClassOptions.length === 0) {
+
+      setResultType('error')
+
+      setResultMessage('请选择班级后再执行班级签到。')
+
+      return
+
+    }
+
+    if (selectedClassOptions.length !== form.selectedClassIds.length) {
+
+      setResultType('error')
+
+      setResultMessage('选中的班级无效，请重新选择后再试。')
+
+      return
+
+    }
+
+
+
+    setSubmitting(true)
+
+    setResultMessage('')
+
+    try {
+
+      let success = 0
+
+      const failed = []
+
+      for (const classOption of selectedClassOptions) {
+
+        const result = await executeClassSignin(classOption, form.signType, { silent: true })
+
+        if (result.status) {
+
+          success += 1
+
+        } else {
+
+          failed.push(`${classOption.name}：${result.message}`)
+
+        }
+
+      }
+
+      if (failed.length > 0) {
+
+        setResultType(success > 0 ? 'info' : 'error')
+
+        setResultMessage(`班级签到完成，成功 ${success} 个，失败 ${failed.length} 个。${failed.slice(0, 2).join('；')}`)
+
+      } else {
+
+        setResultType('success')
+
+        setResultMessage(`班级签到完成，成功 ${success} 个。`)
+
+      }
+
+      await fetchSigninTasks()
+
+      await fetchSigninHistory()
+
+    } finally {
+
+      setSubmitting(false)
+
+    }
+
+  }, [classOptions, executeClassSignin, fetchSigninHistory, fetchSigninTasks, form.selectedClassIds, form.signType, submitting])
+
+
+  // Auto-detect: apply the detected task's sign-in type (and matching class
+  // selection when available) into the form so the user only sees fields
+  // relevant to the activity the teacher actually started.
+  const applyDetectedTask = useCallback((task) => {
+    if (!task) return
+    const detectedType = String(task?.type || 'normal')
+    const classKey = String(task?.classSubjectId || task?.classId || '').trim()
+    const matchedClass = classKey
+      ? classOptions.find((opt) => opt.classId === classKey || opt.id === classKey)
+      : null
+    setForm((prev) => ({
+      ...prev,
+      signType: detectedType,
+      ...(matchedClass ? { selectedClassIds: [matchedClass.id] } : {}),
+    }))
+    setResultType('info')
+    setResultMessage(
+      `已识别为「${detectedType}」类型签到${task?.courseName ? `（${task.courseName}）` : ''}，` +
+      `请补全必填字段后点击「立即签到」。`
+    )
+  }, [classOptions])
+
+  const applyAndSubmitDetectedTask = useCallback(async (task) => {
+    if (!task) return
+    const detectedType = String(task?.type || 'normal')
+    applyDetectedTask(task)
+    // Build a class option the same way TasksTab does — every active task on
+    // Chaoxing is class-scoped, so we route through executeClassSignin to
+    // include classId for correct payload routing.
+    const classOption = {
+      id: task.courseSelector || task.courseId || task.classId,
+      classId: String(task.classId || ''),
+      courseId: String(task.rawCourseId || ''),
+      courseSelector: String(task.courseSelector || task.courseId || ''),
+      name: task.className || task.courseName || '检测到的签到',
+    }
+    if (classOption.classId) {
+      await executeClassSignin(classOption, detectedType)
+    } else if (task.courseId) {
+      await executeSignin(task.courseId, detectedType)
+    }
+  }, [applyDetectedTask, executeClassSignin, executeSignin])
 
 
   const verifyAccount = async (event) => {
@@ -779,6 +1104,10 @@ export default function ChaoxingSignin() {
       setResultType('success')
 
       setResultMessage(pickMessage(resp) || '账号验证成功。')
+
+      void fetchCourses()
+
+      void fetchClasses()
 
     } catch (err) {
 
@@ -947,6 +1276,163 @@ export default function ChaoxingSignin() {
   }
 
 
+  const startClassSigninTask = async () => {
+
+    if (submitting) return
+
+
+
+    const username = form.username.trim()
+
+    const password = form.password
+
+    if (!username || !password) {
+
+      setResultType('error')
+
+      setResultMessage('请输入账号和密码。')
+
+      return
+
+    }
+
+
+
+    setSubmitting(true)
+
+    setResultMessage('')
+
+    setLogs([])
+
+    setTaskStatus(null)
+
+    setTaskId('')
+
+
+
+    try {
+
+      const selectedClassOptions = form.selectedClassIds
+        .map((id) => classOptions.find((subject) => subject.id === id))
+        .filter(Boolean)
+
+      if (form.selectedClassIds.length > 0 && selectedClassOptions.length !== form.selectedClassIds.length) {
+
+        throw new Error('选中的班级无效，请重新选择后再试。')
+
+      }
+
+      const selectedClassNames = selectedClassOptions.map((subject) => subject.name).filter(Boolean)
+
+      const payload = {
+
+        username,
+
+        password,
+
+        subject_type: 'class',
+
+        class_list: selectedClassOptions.map((subject) => subject.classId).filter(Boolean),
+
+        course_list: selectedClassOptions.map((subject) => subject.courseSelector || subject.courseId).filter(Boolean),
+
+        speed: 1,
+
+        jobs: 1,
+
+        sign_type: normalizeSignTypeForApi(form.signType),
+
+        notopen_action: 'retry',
+
+        tiku_config: {},
+
+        notification_config: {},
+
+        ocr_config: {}
+
+      }
+
+
+
+      const { payload: signPayload, signType } = buildSigninPayload(null, form.signType)
+
+      if (signPayload.latitude !== undefined) payload.latitude = signPayload.latitude
+
+      if (signPayload.longitude !== undefined) payload.longitude = signPayload.longitude
+
+      if (signPayload.address !== undefined) payload.address = signPayload.address
+
+      if (signPayload.altitude !== undefined) payload.altitude = signPayload.altitude
+
+      if (signPayload.qr_code !== undefined) payload.qr_code = signPayload.qr_code
+
+      if (signPayload.sign_code !== undefined) payload.sign_code = signPayload.sign_code
+
+      if (signPayload.gesture !== undefined) payload.gesture = signPayload.gesture
+
+
+
+      if (form.photoFile && (signType === 'photo' || signType === 'all')) {
+
+        payload.photo_base64 = await fileToBase64(form.photoFile)
+
+      }
+
+      const resp = await requestChaoxingApi('/class-start', payload)
+
+
+
+      const nextTaskId = resp?.data?.task_id
+
+      if (!nextTaskId) {
+
+        throw new Error('服务端未返回任务 ID。')
+
+      }
+
+      setResultType('success')
+
+      setResultMessage(`班级签到任务已启动：${nextTaskId}`)
+
+      setBackgroundTaskHistory((prev) =>
+
+        upsertBackgroundTaskHistory(prev, {
+
+          task_id: nextTaskId,
+
+          status: 'running',
+
+          message: pickMessage(resp) || '班级签到任务已启动。',
+
+          courseName: selectedClassNames.join('、') || '班级后台签到任务',
+
+          created_at: new Date().toISOString(),
+
+          updated_at: new Date().toISOString()
+
+        })
+
+      )
+
+      await openBackgroundTask(nextTaskId, { setResultType, setResultMessage, setBackgroundTaskHistory })
+
+      void fetchBackgroundTaskHistory()
+
+    } catch (err) {
+
+      setResultType('error')
+
+      setResultMessage(err.message || '启动班级签到任务失败。')
+
+    } finally {
+
+      setSubmitting(false)
+
+    }
+
+  }
+
+
 
   const taskPretty = useMemo(() => {
 
@@ -1103,6 +1589,15 @@ export default function ChaoxingSignin() {
           {activeTab === 'signin' && (
 
             <div className="mt-6 space-y-4">
+
+              <AutoSigninBanner
+                signinTasks={signinTasks}
+                form={form}
+                submitting={submitting}
+                onApplyTask={applyDetectedTask}
+                onApplyAndSubmit={applyAndSubmitDetectedTask}
+                onRefresh={fetchSigninTasks}
+              />
 
               <form className="grid grid-cols-1 gap-4 md:grid-cols-2" onSubmit={verifyAccount}>
 
@@ -1291,6 +1786,128 @@ export default function ChaoxingSignin() {
                 <p className="text-xs text-text/70">
 
                   已选 {form.selectedCourseIds.length} 门，已加载 {courseOptions.length} 门课程
+
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="md:col-span-2">
+
+              <div className="mb-2 flex items-center justify-between gap-2">
+
+                <label htmlFor="cx-classlist" className="block text-sm font-medium text-text">
+
+                  班级选择（班级签到入口）
+
+                </label>
+
+                <Button
+
+                  type="button"
+
+                  variant="secondary"
+
+                  className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105"
+
+                  onClick={fetchClasses}
+
+                >
+
+                  <RefreshCw className="h-4 w-4" />
+
+                </Button>
+
+              </div>
+
+              <select
+
+                id="cx-classlist"
+
+                multiple
+
+                value={form.selectedClassIds}
+
+                onChange={(event) => {
+
+                  const nextSelected = Array.from(event.target.selectedOptions).map((option) => option.value)
+
+                  setForm((prev) => ({ ...prev, selectedClassIds: nextSelected }))
+
+                }}
+
+                className="w-full min-h-[180px] rounded-xl border border-white/30 bg-white/60 px-4 py-2 text-text backdrop-blur-sm transition-all duration-200 hover:border-primary/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+
+              >
+
+                {classOptions.length === 0 ? (
+
+                  <option value="" disabled>暂无班级，请先验证账号后刷新班级</option>
+
+                ) : (
+
+                  classOptions.map((subject) => (
+
+                    <option key={subject.id} value={subject.id}>
+
+                      {subject.name}
+
+                    </option>
+
+                  ))
+
+                )}
+
+              </select>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+
+                <Button
+
+                  type="button"
+
+                  variant="secondary"
+
+                  className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105"
+
+                  onClick={() => {
+
+                    setForm((prev) => ({ ...prev, selectedClassIds: classOptions.map((subject) => subject.id) }))
+
+                  }}
+
+                  disabled={classOptions.length === 0}
+
+                >
+
+                  全选班级
+
+                </Button>
+
+                <Button
+
+                  type="button"
+
+                  variant="secondary"
+
+                  className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105"
+
+                  onClick={() => {
+
+                    setForm((prev) => ({ ...prev, selectedClassIds: [] }))
+
+                  }}
+
+                >
+
+                  清空班级
+
+                </Button>
+
+                <p className="text-xs text-text/70">
+
+                  已选 {form.selectedClassIds.length} 个，已加载 {classOptions.length} 个班级
 
                 </p>
 
@@ -1704,7 +2321,7 @@ export default function ChaoxingSignin() {
 
                 )}
 
-                <div className="md:col-span-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="md:col-span-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
 
                   <Button
 
@@ -1734,7 +2351,7 @@ export default function ChaoxingSignin() {
 
                   >
 
-                    {submitting ? '签到中...' : '一键签到'}
+                    {submitting ? '签到中...' : '课程签到'}
 
                   </Button>
 
@@ -1752,7 +2369,41 @@ export default function ChaoxingSignin() {
 
                   >
 
-                    {submitting ? '处理中...' : '启动任务'}
+                    {submitting ? '处理中...' : '课程任务'}
+
+                  </Button>
+
+                  <Button
+
+                    type="button"
+
+                    className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+
+                    onClick={executeSelectedClassSignin}
+
+                    disabled={submitting || classOptions.length === 0}
+
+                  >
+
+                    {submitting ? '签到中...' : '班级签到'}
+
+                  </Button>
+
+                  <Button
+
+                    type="button"
+
+                    variant="cta"
+
+                    className="min-h-[44px] min-w-[44px] cursor-pointer transition-all duration-200 hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+
+                    onClick={startClassSigninTask}
+
+                    disabled={submitting || classOptions.length === 0}
+
+                  >
+
+                    {submitting ? '处理中...' : '班级任务'}
 
                   </Button>
 
@@ -2056,6 +2707,7 @@ export default function ChaoxingSignin() {
               fetchSigninTasks={fetchSigninTasks}
               openBackgroundTask={(tid) => openBackgroundTask(tid, { setResultType, setResultMessage, setBackgroundTaskHistory })}
               executeSignin={executeSignin}
+              executeClassSignin={executeClassSignin}
             />
           )}
 

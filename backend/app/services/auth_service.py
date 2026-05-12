@@ -15,10 +15,6 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Strict ASCII-only username pattern; prevents Unicode homoglyph bypass of
-# tenant DB naming (f"tenant_{username}") and identifier-based SQL surfaces.
-USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,30}$")
-
 
 class AuthService:
     @staticmethod
@@ -88,28 +84,38 @@ class AuthService:
             if ddl_conn:
                 ddl_conn.close()
 
+    # Must align with _validate_tenant_db_name in app/db/session.py
+    _USERNAME_RE = re.compile(r'^[a-z0-9]+$')
+
     async def register_user(self, username: str, email: str, password: str) -> dict:
-        if not USERNAME_RE.match(username):
-            raise ValueError("Username must be 3-30 ASCII alphanumeric/underscore characters")
+        if not username or not self._USERNAME_RE.match(username):
+            raise ValueError("用户名只能包含小写字母和数字（a-z、0-9）")
         self._validate_password_strength(password)
         password_hash = hash_password(password)
         tenant_db_name = f"tenant_{username}"
 
-        with get_db_session() as conn:
-            cur = conn.cursor()
+        try:
+            with get_db_session() as conn:
+                cur = conn.cursor()
 
-            # Check if user exists
-            cur.execute("SELECT id FROM users WHERE email = %s", (email,))
-            if cur.fetchone():
-                raise ValueError("Email already registered")
+                # Check if user exists (best-effort; the UNIQUE constraint below
+                # is the real source of truth and prevents a race window).
+                cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+                if cur.fetchone():
+                    raise ValueError("Email already registered")
 
-            # Insert user
-            cur.execute(
-                "INSERT INTO users (username, email, password_hash, tenant_db_name) VALUES (%s, %s, %s, %s) RETURNING id",
-                (username, email, password_hash, tenant_db_name)
-            )
-            user_id = cur.fetchone()["id"]
-            cur.close()
+                # Insert user. Concurrent INSERTs racing the SELECT above will
+                # hit the UNIQUE index on email and raise IntegrityError.
+                cur.execute(
+                    "INSERT INTO users (username, email, password_hash, tenant_db_name) VALUES (%s, %s, %s, %s) RETURNING id",
+                    (username, email, password_hash, tenant_db_name)
+                )
+                user_id = cur.fetchone()["id"]
+                cur.close()
+        except psycopg2.errors.UniqueViolation:
+            raise ValueError("Email already registered")
+        except psycopg2.errors.IntegrityError:
+            raise ValueError("用户名或邮箱已被占用")
 
         # Create tenant database synchronously; roll back user row on failure.
         try:

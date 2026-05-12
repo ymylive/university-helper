@@ -16,11 +16,35 @@ const parsePayload = async (response) => {
   }
 }
 
+const formatDetail = (detail) => {
+  if (!detail) return ''
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (!item) return ''
+        if (typeof item === 'string') return item
+        const loc = Array.isArray(item.loc)
+          ? item.loc.filter((seg) => seg !== 'body' && seg !== 'query').join('.')
+          : ''
+        const msg = item.msg || item.message || ''
+        if (!msg) return loc
+        return loc ? `${loc}: ${msg}` : msg
+      })
+      .filter(Boolean)
+    return messages.join('；')
+  }
+  if (typeof detail === 'object') {
+    return detail.msg || detail.message || ''
+  }
+  return String(detail)
+}
+
 const pickErrorMessage = (payload, status) => {
   if (!payload) return `请求失败（${status}）`
   return (
     payload.message ||
-    payload.detail ||
+    formatDetail(payload.detail) ||
     payload.error ||
     payload.msg ||
     payload.data?.message ||

@@ -62,7 +62,9 @@ class TestAuthRegistration:
             "password": "weak"
         })
 
-        assert response.status_code == 400
+        # Pydantic field_validator on RegisterRequest rejects weak passwords
+        # at the schema layer, which FastAPI surfaces as 422.
+        assert response.status_code == 422
 
     def test_register_invalid_username(self, client):
         response = client.post("/api/v1/auth/register", json={
@@ -71,10 +73,23 @@ class TestAuthRegistration:
             "password": "Test1234"
         })
 
-        # Pydantic field_validator on RegisterRequest rejects non-alphanumeric
-        # usernames at the schema layer, which FastAPI surfaces as 422.
+        # Pydantic field_validator on RegisterRequest rejects usernames that
+        # contain characters outside [a-z0-9] (so the tenant database name
+        # stays valid). FastAPI surfaces this as 422.
         assert response.status_code == 422
-        assert "alphanumeric" in response.text.lower()
+        assert "用户名" in response.text or "username" in response.text.lower()
+
+    def test_register_uppercase_username_rejected(self, client):
+        # Regression: uppercase usernames used to pass schema validation and
+        # the service-layer isalnum() check, then silently break every
+        # subsequent tenant-scoped request because _validate_tenant_db_name
+        # only accepts [a-z0-9]+. Now the schema rejects them up front.
+        response = client.post("/api/v1/auth/register", json={
+            "username": "TestUser",
+            "email": "test@example.com",
+            "password": "Test1234"
+        })
+        assert response.status_code == 422
 
 
 class TestAuthLogin:

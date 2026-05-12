@@ -30,6 +30,68 @@ export const SIGN_TYPE_FALLBACK_MAP = {
 
 }
 
+// Backend `_resolve_sign_type` maps otherId → these types. Required fields
+// here must match the field names the upload payload uses (built in
+// buildSigninPayload). `requires` is the list of form keys that must be
+// non-empty for that type's submission to succeed; UI uses it to highlight
+// what the user still needs to fill in.
+export const SIGN_TYPE_META = {
+  normal:   { label: '普通签到',   requires: [],                hint: '老师发起的普通签到，直接点击签到即可。' },
+  photo:    { label: '拍照签到',   requires: ['photoFile'],     hint: '请上传一张照片后再签到。' },
+  location: { label: '位置签到',   requires: ['latitude', 'longitude'], hint: '请填写经纬度，可用「地图选点」或「搜索地点」自动获取。' },
+  qrcode:   { label: '二维码签到', requires: ['qrCode'],        hint: '请扫描或上传二维码图片，也可手动粘贴二维码链接。' },
+  gesture:  { label: '手势签到',   requires: ['gesturePattern'],hint: '请输入老师发布的手势编码。' },
+  code:     { label: '签到码签到', requires: ['signCode'],      hint: '请输入老师发布的签到码。' },
+  all:      { label: '通用模式',   requires: [],                hint: '将根据老师发起的类型自动匹配。' },
+}
+
+export const getSignTypeLabel = (type) =>
+  SIGN_TYPE_META[type]?.label || type || '未知类型'
+
+const isFormFieldFilled = (form, key) => {
+  const value = form?.[key]
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  return Boolean(value)
+}
+
+export const getMissingFieldsForSignType = (signType, form) => {
+  const meta = SIGN_TYPE_META[signType]
+  if (!meta) return []
+  return meta.requires.filter((key) => !isFormFieldFilled(form, key))
+}
+
+const FIELD_LABELS = {
+  photoFile: '签到照片',
+  latitude: '纬度',
+  longitude: '经度',
+  qrCode: '二维码内容',
+  gesturePattern: '手势编码',
+  signCode: '签到码',
+}
+
+export const formatMissingFieldLabels = (fields) =>
+  (fields || []).map((field) => FIELD_LABELS[field] || field).join('、')
+
+// Pick the most-actionable active signin task from a tasks list — prefers
+// ones with status "active" and an earliest deadline so the UI surfaces the
+// teacher's currently-open sign-in activity.
+export const pickPrimaryActiveTask = (tasks) => {
+  if (!Array.isArray(tasks)) return null
+  const active = tasks.filter((task) => {
+    const status = String(task?.status || '').toLowerCase()
+    const isBackground = task?.actionable === false || task?.source === 'background'
+    return !isBackground && (status === 'active' || status === '' || status === 'unknown')
+  })
+  if (active.length === 0) return null
+  // Earliest deadline first; tasks without a deadline sort to the end.
+  return [...active].sort((a, b) => {
+    const aTime = a?.deadline ? new Date(a.deadline).getTime() : Number.POSITIVE_INFINITY
+    const bTime = b?.deadline ? new Date(b.deadline).getTime() : Number.POSITIVE_INFINITY
+    return aTime - bTime
+  })[0]
+}
+
 // ── Pure utility functions ─────────────────────────────────────────────────────
 
 export const parsePayload = async (response) => {
@@ -52,11 +114,35 @@ export const parsePayload = async (response) => {
 
 
 
+const formatMessageDetail = (detail) => {
+  if (!detail) return ''
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (!item) return ''
+        if (typeof item === 'string') return item
+        const loc = Array.isArray(item.loc)
+          ? item.loc.filter((seg) => seg !== 'body' && seg !== 'query').join('.')
+          : ''
+        const msg = item.msg || item.message || ''
+        if (!msg) return loc
+        return loc ? `${loc}: ${msg}` : msg
+      })
+      .filter(Boolean)
+      .join('；')
+  }
+  if (typeof detail === 'object') {
+    return detail.msg || detail.message || ''
+  }
+  return String(detail)
+}
+
 export const pickMessage = (payload) => {
 
   if (!payload) return ''
 
-  return payload.msg || payload.message || payload.detail || payload.data?.message || ''
+  return payload.msg || payload.message || formatMessageDetail(payload.detail) || payload.data?.message || ''
 
 }
 
@@ -142,6 +228,42 @@ export const buildCourseSelector = (course) => {
 
   return courseId || classId
 
+}
+
+
+export const buildClassSelector = (subject) => {
+
+  const existingId = normalizeCourseText(subject?.id)
+
+  if (existingId.includes('_')) return existingId
+
+  const courseId = normalizeCourseText(subject?.rawCourseId || subject?.courseId || subject?.course_id)
+
+  const classId = normalizeCourseText(
+    subject?.classSubjectId || subject?.subjectId || subject?.classId || subject?.clazzId || subject?.class_id || subject?.clazz_id || existingId
+  )
+
+  if (courseId && classId) return `${courseId}_${classId}`
+
+  return classId || existingId
+
+}
+
+
+export const getClassDisplayName = (subject, fallbackLabel = '') => {
+  const className = [
+    subject?.className,
+    subject?.clazzName,
+    subject?.name,
+    subject?.courseName,
+    subject?.title,
+  ]
+    .map(normalizeCourseText)
+    .find(Boolean)
+  const courseName = normalizeCourseText(subject?.courseName)
+  const selector = buildClassSelector(subject)
+  if (className && courseName && className !== courseName) return `${className} / ${courseName}`
+  return className || fallbackLabel || (selector ? `班级 ${selector}` : '未命名班级')
 }
 
 
