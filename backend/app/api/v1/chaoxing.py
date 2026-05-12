@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_id
 from app.services.course.chaoxing.signin import signin_manager
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,11 @@ class ChaoxingSignRequest(BaseModel):
     altitude: Optional[float] = None
 
 
+class ChaoxingClassSignRequest(ChaoxingSignRequest):
+    class_id: str
+    active_id: Optional[str] = None
+
+
 class ChaoxingStartRequest(BaseModel):
     username: str
     password: str
@@ -87,6 +92,13 @@ class ChaoxingStartRequest(BaseModel):
     photo_base64: Optional[str] = None
     photo: Optional[str] = None
     altitude: Optional[float] = None
+
+
+class ChaoxingClassStartRequest(ChaoxingStartRequest):
+    class_id: Optional[str] = None
+    class_list: List[str] = Field(default_factory=list)
+    active_id: Optional[str] = None
+    subject_type: str = "class"
 
 
 def _request_photon_json(path: str, params: Dict[str, Any]) -> Any:
@@ -154,6 +166,20 @@ def _normalize_sign_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     if normalized.get("course_id") is None and normalized.get("courseId") is not None:
         normalized["course_id"] = normalized.get("courseId")
+    if normalized.get("class_id") is None:
+        for key in ("classId", "clazzId", "clazz_id"):
+            if normalized.get(key) is not None:
+                normalized["class_id"] = normalized.get(key)
+                break
+    if normalized.get("active_id") is None and normalized.get("activeId") is not None:
+        normalized["active_id"] = normalized.get("activeId")
+    if normalized.get("course_list") is None and normalized.get("courseList") is not None:
+        normalized["course_list"] = normalized.get("courseList")
+    if normalized.get("class_list") is None:
+        for key in ("classList", "clazzList"):
+            if normalized.get(key) is not None:
+                normalized["class_list"] = normalized.get(key)
+                break
     if normalized.get("object_id") is None and normalized.get("objectId") is not None:
         normalized["object_id"] = normalized.get("objectId")
     if normalized.get("latitude") is None and normalized.get("lat") is not None:
@@ -358,12 +384,8 @@ async def chaoxing_location_reverse_geocode(lat: float, lng: float):
 @router.post("/login")
 async def chaoxing_login(
     request: ChaoxingLoginRequest,
-    current_user: dict = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
 ):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
     result = await _run_blocking(
         signin_manager.login,
         user_id=user_id,
@@ -384,11 +406,7 @@ async def chaoxing_login(
 
 
 @router.get("/courses")
-async def chaoxing_courses(current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
+async def chaoxing_courses(user_id: str = Depends(get_current_user_id)):
     courses = await _run_blocking(signin_manager.get_courses, user_id)
     return {
         "status": True,
@@ -398,12 +416,63 @@ async def chaoxing_courses(current_user: dict = Depends(get_current_user)):
     }
 
 
-@router.get("/tasks")
-async def chaoxing_tasks(current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
+@router.get("/classes")
+async def chaoxing_classes(user_id: str = Depends(get_current_user_id)):
+    classes = await _run_blocking(signin_manager.get_classes, user_id)
+    return {
+        "status": True,
+        "message": "ok",
+        "data": classes,
+        "classes": classes,
+    }
 
+
+@router.get("/classes/{class_id}/activities")
+async def chaoxing_class_activities(
+    class_id: str,
+    course_id: Optional[str] = None,
+    include_details: bool = True,
+    user_id: str = Depends(get_current_user_id),
+):
+    activities = await _run_blocking(
+        signin_manager.get_class_activities,
+        user_id=user_id,
+        class_id=class_id,
+        course_id=course_id,
+        include_details=include_details,
+    )
+    return {
+        "status": True,
+        "message": "ok",
+        "data": activities,
+        "activities": activities,
+    }
+
+
+@router.get("/remote-endpoints")
+async def chaoxing_remote_endpoints(
+    course_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+    active_id: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id),
+):
+    endpoints = await _run_blocking(
+        signin_manager.get_remote_endpoints,
+        user_id=user_id,
+        course_id=course_id,
+        class_id=class_id,
+        active_id=active_id,
+    )
+    return {
+        "status": True,
+        "message": "ok",
+        "data": endpoints,
+        "remoteEndpoints": endpoints,
+    }
+
+
+@router.get("/tasks")
+async def chaoxing_tasks(user_id: str = Depends(get_current_user_id)):
     tasks = await _run_blocking(
         signin_manager.get_active_tasks, user_id=user_id, sign_type="all"
     )
@@ -411,21 +480,13 @@ async def chaoxing_tasks(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/task-list")
-async def chaoxing_task_list(current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
+async def chaoxing_task_list(user_id: str = Depends(get_current_user_id)):
     tasks = await _run_blocking(signin_manager.list_tasks, user_id=user_id)
     return {"status": True, "message": "ok", "data": tasks}
 
 
 @router.get("/history")
-async def chaoxing_history(current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
+async def chaoxing_history(user_id: str = Depends(get_current_user_id)):
     history = await _run_blocking(signin_manager.get_history, user_id)
     return {"status": True, "message": "ok", "data": history}
 
@@ -433,14 +494,11 @@ async def chaoxing_history(current_user: dict = Depends(get_current_user)):
 @router.post("/sign")
 async def chaoxing_sign(
     raw_request: Request,
-    current_user: dict = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
 ):
     payload = _normalize_sign_payload(await _parse_request_payload(raw_request))
     request = _validate_payload(ChaoxingSignRequest, payload)
     _ensure_supported_sign_type(request.sign_type)
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
 
     result = await _run_blocking(
         signin_manager.sign_once,
@@ -458,17 +516,70 @@ async def chaoxing_sign(
     }
 
 
+@router.post("/class-sign")
+async def chaoxing_class_sign(
+    raw_request: Request,
+    user_id: str = Depends(get_current_user_id),
+):
+    payload = _normalize_sign_payload(await _parse_request_payload(raw_request))
+    request = _validate_payload(ChaoxingClassSignRequest, payload)
+    _ensure_supported_sign_type(request.sign_type)
+
+    result = await _run_blocking(
+        signin_manager.sign_class_once,
+        user_id=user_id,
+        username=request.username,
+        password=request.password,
+        class_id=request.class_id,
+        sign_type=request.sign_type,
+        active_id=request.active_id,
+        course_id=request.course_id,
+        options=request.model_dump(),
+    )
+    return {
+        "status": bool(result.get("status")),
+        "message": result.get("message", ""),
+        "data": result.get("data", {}),
+    }
+
+
+@router.post("/classes/{class_id}/sign")
+async def chaoxing_class_sign_by_path(
+    class_id: str,
+    raw_request: Request,
+    user_id: str = Depends(get_current_user_id),
+):
+    payload = _normalize_sign_payload(await _parse_request_payload(raw_request))
+    payload["class_id"] = payload.get("class_id") or class_id
+    request = _validate_payload(ChaoxingClassSignRequest, payload)
+    _ensure_supported_sign_type(request.sign_type)
+
+    result = await _run_blocking(
+        signin_manager.sign_class_once,
+        user_id=user_id,
+        username=request.username,
+        password=request.password,
+        class_id=request.class_id,
+        sign_type=request.sign_type,
+        active_id=request.active_id,
+        course_id=request.course_id,
+        options=request.model_dump(),
+    )
+    return {
+        "status": bool(result.get("status")),
+        "message": result.get("message", ""),
+        "data": result.get("data", {}),
+    }
+
+
 @router.post("/start")
 async def chaoxing_start(
     raw_request: Request,
-    current_user: dict = Depends(get_current_user),
+    user_id: str = Depends(get_current_user_id),
 ):
     payload = _normalize_sign_payload(await _parse_request_payload(raw_request))
     request = _validate_payload(ChaoxingStartRequest, payload)
     _ensure_supported_sign_type(request.sign_type)
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
 
     task_id = await _run_blocking(
         signin_manager.start_task, user_id=user_id, payload=request.model_dump()
@@ -480,12 +591,52 @@ async def chaoxing_start(
     }
 
 
-@router.get("/task/{task_id}")
-async def chaoxing_task(task_id: str, current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
+@router.post("/class-start")
+async def chaoxing_class_start(
+    raw_request: Request,
+    user_id: str = Depends(get_current_user_id),
+):
+    payload = _normalize_sign_payload(await _parse_request_payload(raw_request))
+    request = _validate_payload(ChaoxingClassStartRequest, payload)
+    _ensure_supported_sign_type(request.sign_type)
 
+    task_id = await _run_blocking(
+        signin_manager.start_class_task,
+        user_id=user_id,
+        payload=request.model_dump(),
+    )
+    return {
+        "status": True,
+        "message": "Class task started",
+        "data": {"task_id": task_id},
+    }
+
+
+@router.post("/classes/{class_id}/start")
+async def chaoxing_class_start_by_path(
+    class_id: str,
+    raw_request: Request,
+    user_id: str = Depends(get_current_user_id),
+):
+    payload = _normalize_sign_payload(await _parse_request_payload(raw_request))
+    payload["class_id"] = payload.get("class_id") or class_id
+    request = _validate_payload(ChaoxingClassStartRequest, payload)
+    _ensure_supported_sign_type(request.sign_type)
+
+    task_id = await _run_blocking(
+        signin_manager.start_class_task,
+        user_id=user_id,
+        payload=request.model_dump(),
+    )
+    return {
+        "status": True,
+        "message": "Class task started",
+        "data": {"task_id": task_id},
+    }
+
+
+@router.get("/task/{task_id}")
+async def chaoxing_task(task_id: str, user_id: str = Depends(get_current_user_id)):
     task = await _run_blocking(
         signin_manager.get_task, user_id=user_id, task_id=task_id
     )
@@ -495,11 +646,7 @@ async def chaoxing_task(task_id: str, current_user: dict = Depends(get_current_u
 
 
 @router.get("/logs/{task_id}")
-async def chaoxing_logs(task_id: str, current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("user_id") or "")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
+async def chaoxing_logs(task_id: str, user_id: str = Depends(get_current_user_id)):
     logs = await _run_blocking(
         signin_manager.get_task_logs, user_id=user_id, task_id=task_id
     )
