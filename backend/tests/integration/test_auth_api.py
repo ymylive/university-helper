@@ -29,7 +29,8 @@ def mock_tenant_db():
 
 class TestAuthRegistration:
     def test_register_success(self, client, mock_db, mock_tenant_db):
-        mock_db.fetchone.side_effect = [None, {"id": 1}]
+        # email select → None, username select → None, INSERT RETURNING → id=1
+        mock_db.fetchone.side_effect = [None, None, {"id": 1}]
 
         response = client.post("/api/v1/auth/register", json={
             "username": "testuser",

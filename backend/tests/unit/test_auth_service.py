@@ -34,21 +34,53 @@ async def test_register_user_duplicate_email(auth_service, mock_conn, mock_curso
 
 
 @pytest.mark.asyncio
+async def test_register_user_duplicate_username(auth_service, mock_conn, mock_cursor):
+    # email check returns None, username check finds existing row
+    mock_cursor.fetchone.side_effect = [None, {"id": 2}]
+
+    with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
+        with pytest.raises(ValueError, match="Username already taken"):
+            await auth_service.register_user("user", "fresh@example.com", "Password1")
+
+
+@pytest.mark.asyncio
+async def test_register_user_unique_violation_username_constraint(auth_service, mock_conn, mock_cursor):
+    # Pre-checks pass, INSERT races and hits username UNIQUE index — must NOT
+    # be reported as an email collision. psycopg2 errors have read-only diag,
+    # so subclass UniqueViolation and override the diag property.
+    import psycopg2
+
+    class _FakeUniqueViolation(psycopg2.errors.UniqueViolation):
+        @property
+        def diag(self):
+            return type("D", (), {"constraint_name": "users_username_key"})()
+
+    mock_cursor.fetchone.side_effect = [None, None]
+    mock_cursor.execute.side_effect = [None, None, _FakeUniqueViolation()]
+
+    with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
+        with pytest.raises(ValueError, match="Username already taken"):
+            await auth_service.register_user("user", "fresh@example.com", "Password1")
+
+
+@pytest.mark.asyncio
 async def test_register_user_sql_injection_attempt(auth_service, mock_conn, mock_cursor):
-    mock_cursor.fetchone.side_effect = [None, {"id": 1}]
+    mock_cursor.fetchone.side_effect = [None, None, {"id": 1}]
 
     with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
         with patch("app.services.auth_service.psycopg2.connect", return_value=mock_conn):
             with patch("app.services.auth_service.create_access_token", return_value="token"):
                 await auth_service.register_user("user", "test@example.com", "Password1")
 
-                call_args = mock_cursor.execute.call_args_list[1][0]
-                assert "%s" in call_args[0]
+                # INSERT is now the 3rd execute (email select, username select, INSERT)
+                insert_args = mock_cursor.execute.call_args_list[2][0]
+                assert "%s" in insert_args[0]
+                assert "INSERT INTO users" in insert_args[0]
 
 
 @pytest.mark.asyncio
 async def test_register_user_success(auth_service, mock_conn, mock_cursor):
-    mock_cursor.fetchone.side_effect = [None, {"id": 1}]
+    mock_cursor.fetchone.side_effect = [None, None, {"id": 1}]
 
     with patch("app.services.auth_service.get_db_session", return_value=mock_conn):
         with patch("app.services.auth_service.psycopg2.connect", return_value=mock_conn):

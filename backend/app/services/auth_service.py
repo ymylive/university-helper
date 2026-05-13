@@ -98,22 +98,32 @@ class AuthService:
             with get_db_session() as conn:
                 cur = conn.cursor()
 
-                # Check if user exists (best-effort; the UNIQUE constraint below
-                # is the real source of truth and prevents a race window).
+                # Best-effort pre-checks. The UNIQUE constraints are the real
+                # source of truth and close the SELECT→INSERT race window.
                 cur.execute("SELECT id FROM users WHERE email = %s", (email,))
                 if cur.fetchone():
                     raise ValueError("Email already registered")
+                cur.execute("SELECT id FROM users WHERE username = %s", (username,))
+                if cur.fetchone():
+                    raise ValueError("Username already taken")
 
-                # Insert user. Concurrent INSERTs racing the SELECT above will
-                # hit the UNIQUE index on email and raise IntegrityError.
                 cur.execute(
                     "INSERT INTO users (username, email, password_hash, tenant_db_name) VALUES (%s, %s, %s, %s) RETURNING id",
                     (username, email, password_hash, tenant_db_name)
                 )
                 user_id = cur.fetchone()["id"]
                 cur.close()
-        except psycopg2.errors.UniqueViolation:
-            raise ValueError("Email already registered")
+        except psycopg2.errors.UniqueViolation as exc:
+            # users has three UNIQUE constraints (email, username, tenant_db_name).
+            # Without inspecting which one fired, every collision read as "Email
+            # already registered" — a fresh email with an already-taken username
+            # surfaced a misleading error message to the user.
+            constraint = (getattr(getattr(exc, "diag", None), "constraint_name", "") or "").lower()
+            if "email" in constraint:
+                raise ValueError("Email already registered")
+            if "username" in constraint or "tenant_db_name" in constraint:
+                raise ValueError("Username already taken")
+            raise ValueError("用户名或邮箱已被占用")
         except psycopg2.errors.IntegrityError:
             raise ValueError("用户名或邮箱已被占用")
 
